@@ -30,6 +30,18 @@
 #include <sys/module.h>
 #include <sys/malloc.h>
 
+#include <dev/pci/pcivar.h>
+#include <dev/pci/pcireg.h>
+#include <machine/bus.h>
+#include <sys/rman.h>
+
+#include <sys/socket.h>
+#include <sys/sockio.h>
+#include <net/ethernet.h>
+#include <net/if.h>
+#include <net/if_var.h>
+#include <net/if_types.h>
+
 #include "adapter.h"
 
 #define PCI_VENDOR_ID_XILINX 0x10ee
@@ -48,12 +60,21 @@ static device_method_t sume_methods[] = {
 static driver_t sume_driver = {
 	"sume",
 	sume_methods,
-	sizeof(adapter_t)
+	sizeof(struct sume_adapter)
 };
 
+MALLOC_DECLARE(M_SUME);
 MALLOC_DEFINE(M_SUME, "sume", "NetFPGA SUME device driver");
 
+static unsigned int sume_nports __read_mostly = SUME_PORTS_MAX;
+TUNABLE_INT("sume.nports", &sume_nports);
+
 static int mod_event(module_t, int, void *);
+void sume_intr_handler(void *);
+static int sume_intr_filter(void *);
+
+static inline unsigned int read_reg(struct sume_adapter *, int);
+static inline void write_reg(struct sume_adapter *, int, unsigned int);
 
 struct {
 	uint16_t device;
@@ -61,6 +82,18 @@ struct {
 } sume_pciids[] = {
 	{0x7028, "NetFPGA SUME"},
 };
+
+static inline unsigned int
+read_reg(struct sume_adapter *adapter, int offset)
+{
+	return (bus_space_read_4(adapter->bt, adapter->bh, offset << 2));
+}
+
+static inline void
+write_reg(struct sume_adapter *adapter, int offset, unsigned int val)
+{
+	bus_space_write_4(adapter->bt, adapter->bh, offset << 2, val);
+}
 
 static int
 sume_probe(device_t dev)
@@ -82,26 +115,294 @@ sume_probe(device_t dev)
 	return (ENXIO);
 }
 
+void
+sume_intr_handler(void *arg)
+{
+	printf("Interrupt handler!\n");
+}
+
+static int
+sume_intr_filter(void *arg)
+{
+	printf("Interrupt filter!\n");
+	return (FILTER_HANDLED);
+}
+
+static int
+sume_probe_riffa_pci(struct sume_adapter *adapter)
+{
+	device_t dev = adapter->dev;
+	int error, count, capmem;
+	uint32_t reg, devctl, linkctl;
+
+	adapter->rid = PCIR_BAR(0);
+	adapter->bar0_addr = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &adapter->rid, RF_ACTIVE);
+	if (adapter->bar0_addr == NULL) {
+		device_printf(dev, "Unable to allocate bus resource: bar0_addr\n");
+		return (ENXIO);
+	}
+	adapter->bt = rman_get_bustag(adapter->bar0_addr);
+	adapter->bh = rman_get_bushandle(adapter->bar0_addr);
+	adapter->bar0_len = rman_get_size(adapter->bar0_addr);
+	if (adapter->bar0_len != 1024) {        /* XXX-BZ magic number */
+		device_printf(dev, "%s: bar0_len %lu != 1024\n", __func__,
+				adapter->bar0_len);
+		return (ENXIO);
+        }
+
+	count = pci_msi_count(dev);
+	error = pci_alloc_msi(dev, &count);
+	if (error) {
+		device_printf(dev, "Unable to allocate bus resource: PCI MSI\n");
+		return (error);
+	}
+
+	adapter->irq.rid = 1; // should be 1, thus says pci_alloc_msi()
+	adapter->irq.res = bus_alloc_resource_any(dev, SYS_RES_IRQ, &adapter->irq.rid, RF_SHAREABLE | RF_ACTIVE);
+	if (adapter->irq.res == NULL) {
+		device_printf(dev, "Unable to allocate bus resource: IRQ memory\n");
+		return (ENXIO);
+	}
+
+	error = bus_setup_intr(dev, adapter->irq.res, INTR_MPSAFE | INTR_TYPE_NET, sume_intr_filter, sume_intr_handler, adapter, &adapter->irq.tag);
+	if (error) {
+		device_printf(dev, "failed to setup interrupt for rid %d, name %s: %d\n", adapter->irq.rid, "SUME_INTR", error);
+		return (ENXIO);
+	} else
+		bus_describe_intr(dev, adapter->irq.res, adapter->irq.tag, "%s", "SUME_INTR");
+
+	if (pci_find_cap(dev, PCIY_EXPRESS, &capmem) != 0) {
+		device_printf(dev, "%s: pcie_capability_read_dword PCI_EXP_DEVCTL error\n", __func__);
+		return (ENXIO);
+	}
+
+	devctl = pci_read_config(dev, capmem + PCIER_DEVICE_CTL, 2);
+	pci_write_config(dev, capmem + PCIER_DEVICE_CTL, (devctl | PCIEM_CTL_EXT_TAG_FIELD), 2);
+
+	devctl = pci_read_config(dev, capmem + PCIER_DEVICE_CTL2, 2);
+	pci_write_config(dev, capmem + PCIER_DEVICE_CTL2, (devctl | PCIEM_CTL2_ID_ORDERED_REQ_EN), 2);
+
+	linkctl = pci_read_config(dev, capmem + PCIER_LINK_CTL, 2);
+	pci_write_config(dev, capmem + PCIER_LINK_CTL, (linkctl | PCIEM_LINK_CTL_RCB), 2);
+
+	reg = read_reg(adapter, RIFFA_INFO_REG_OFF);
+	adapter->num_chnls =    SUME_RIFFA_CHANNELS(reg & 0xf);
+	adapter->num_sg =       RIFFA_SG_ELEMS * ((reg >> 19) & 0xf);
+	adapter->sg_buf_size =  RIFFA_SG_BUF_SIZE * ((reg >> 19) & 0xf);
+
+	error = ENODEV;
+	/* Check bus master is enabled. */
+	if (((reg >> 4) & 0x1) != 1) {
+		device_printf(dev, "%s: bus master not enabled: %d\n",
+		    __func__, ((reg >> 4) & 0x1));
+		return (error);
+	}
+	/* Check link parameters are valid. */
+	if (((reg >> 5) & 0x3f) == 0 || ((reg >> 11) & 0x3) == 0) {
+		device_printf(dev, "%s: link parameters not valid: %d %d\n",
+		    __func__, ((reg >> 5) & 0x3f), ((reg >> 11) & 0x3));
+		return (error);
+	}
+	/* Check # of channels are within valid range. */
+	if ((reg & 0xf) == 0 || (reg & 0xf) > RIFFA_MAX_CHNLS) {
+		device_printf(dev, "%s: number of channels out of range: %d\n",
+		    __func__, (reg & 0xf));
+		return (error);
+	}
+	/* Check bus width. */
+	if (((reg >> 19) & 0xf) == 0 ||
+	    ((reg >> 19) & 0xf) > RIFFA_MAX_BUS_WIDTH_PARAM) {
+		device_printf(dev, "%s: bus width out f range: %d\n",
+		    __func__, ((reg >> 19) & 0xf));
+		return (error);
+	}
+
+	device_printf(dev, "[riffa] # of channels: %d\n",
+	    (reg & 0xf));
+	device_printf(dev, "[riffa] bus interface width: %d\n",
+	    (((reg >> 19) & 0xf) << 5));
+	device_printf(dev, "[riffa] bus master enabled: %d\n",
+	    ((reg >> 4) & 0x1));
+	device_printf(dev, "[riffa] negotiated link width: %d\n",
+	    ((reg >> 5) & 0x3f));
+	device_printf(dev, "[riffa] negotiated rate width: %d MTs\n",
+	    ((reg >> 11) & 0x3) * 2500);
+	device_printf(dev, "[riffa] max downstream payload: %d B\n",
+	    (128 << ((reg >> 13) & 0x7)));
+	device_printf(dev, "[riffa] max upstream payload: %d B\n",
+	    (128 << ((reg >> 16) & 0x7)));
+
+	return (0);
+
+}
+
+static int
+sume_netdev_alloc(struct sume_adapter *adapter, unsigned int port)
+{
+	struct ifnet *ifp;	
+	struct sume_port *sume_port = &adapter->port[port];	
+	device_t dev = adapter->dev;
+
+	ifp = if_alloc(IFT_ETHER);
+	if (ifp == NULL) {
+                device_printf(dev, "Cannot allocate ifnet\n");
+                return (ENOMEM);
+        }
+
+	adapter->netdev[port] = ifp;
+	ifp->if_softc = sume_port;
+
+	if_initname(ifp, SUME_ETH_DEVICE_NAME, port);
+	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
+
+	//ifp->if_init = sume_if_init;
+	//ifp->if_ioctl = sume_if_ioctl;
+
+	sume_port->adapter = adapter;
+	sume_port->netdev = ifp;
+	sume_port->port = port;
+	sume_port->riffa_channel = SUME_RIFFA_CHANNEL_DATA(sume_port);
+
+	adapter->netdev[port] = ifp;
+
+	uint8_t hw_addr[ETHER_ADDR_LEN] = DEFAULT_ETHER_ADDRESS;
+	hw_addr[ETHER_ADDR_LEN-1] = port;
+	ether_ifattach(ifp, hw_addr);
+
+	return (0);
+}
+
+static int
+sume_probe_riffa_buffer(const struct sume_adapter *adapter, 
+		struct riffa_chnl_dir ***p, const char *dir)
+{
+	// dummy function for now
+	return (0);
+}
+
+static int
+sume_probe_riffa_buffers(struct sume_adapter *adapter) {
+	int error;
+
+	error = sume_probe_riffa_buffer(adapter, &adapter->recv, "recv");
+	if (error)
+		return (error);
+
+	error = sume_probe_riffa_buffer(adapter, &adapter->send, "send");
+
+	return (error);
+}
+
+static void
+sume_remove_riffa_buffer(const struct sume_adapter *adapter,
+    struct riffa_chnl_dir **pp)
+{
+	// dummy function for now
+}
+
+static void
+sume_remove_riffa_buffers(struct sume_adapter *adapter)
+{
+	if (adapter->send != NULL) {
+		sume_remove_riffa_buffer(adapter, adapter->send);
+		free(adapter->send, M_SUME);
+		adapter->send = NULL;
+	}
+	if (adapter->recv != NULL) {
+		sume_remove_riffa_buffer(adapter, adapter->recv);
+		free(adapter->recv, M_SUME);
+		adapter->recv = NULL;
+	}
+}
+
 static int
 sume_attach(device_t dev)
 {
-	bus_generic_attach(dev);
+	struct sume_adapter *adapter = device_get_softc(dev);
+	adapter->dev = dev;
+	int error, i;
+
+	/* Start with the safety check to avoid malfunctions further down. */
+	/* XXX-BZ they should bake this informaton into the bitfile. */
+	if (sume_nports < 1 || sume_nports > SUME_PORTS_MAX) {
+		device_printf(dev, "%s: sume_nports out of range: %d (1..%d). "
+		    "Using max.\n", __func__, sume_nports, SUME_PORTS_MAX);
+		sume_nports = SUME_PORTS_MAX;
+	}
+
+	//atomic_set(&adapter->running, 0);
+
+	/* OK finish up RIFFA. */
+	error = sume_probe_riffa_pci(adapter);
+	if (error != 0)
+		goto error;
+
+	error = sume_probe_riffa_buffers(adapter);
+	if (error != 0)
+		goto error;
+
+	/* Now do the network interfaces. */
+	for (i = 0; i < sume_nports; i++) {
+		error = sume_netdev_alloc(adapter, i);
+		if (error != 0)
+			goto error;
+	}
+
+	//error = sume_register_netdevs(adapter);
+	//if (error != 0)
+		//goto error;
+
+	/* Register debug sysctls. */
+	//sume_init_sysctl();
+
+	/* Reset the HW. */
+	read_reg(adapter, RIFFA_INFO_REG_OFF);
+
+	/* Ready to go, "enable" IRQ. */
+	//atomic_set(&adapter->running, 1);
+
+	bus_generic_attach(dev); // where?
 
 	return (0);
+
+error:
+	sume_detach(dev);
+
+	return (error);
 }
 
 static int
 sume_detach(device_t dev)
 {
-	int rc;
+	struct sume_adapter *adapter = device_get_softc(dev);
+	int rc, i;
+
+	sume_remove_riffa_buffers(adapter);
+
+	for (i = 0; i < sume_nports; i++) {
+		if (adapter->netdev[i] != NULL)
+			ether_ifdetach(adapter->netdev[i]);
+	}
 
 	rc = bus_generic_detach(dev);
 	if (rc)
 		return (rc);
+
+	if (adapter->irq.tag)
+		bus_teardown_intr(dev, adapter->irq.res, adapter->irq.tag);
+	if (adapter->irq.res)
+		bus_release_resource(dev, SYS_RES_IRQ, adapter->irq.rid, adapter->irq.res);
+
 	device_delete_children(dev);
+
+	pci_release_msi(dev);
+
+	if (adapter->bar0_addr)
+		bus_release_resource(dev, SYS_RES_MEMORY, adapter->rid, adapter->bar0_addr);
 
 	return (0);
 }
+
 
 static int
 mod_event(module_t mod, int cmd, void *arg)
