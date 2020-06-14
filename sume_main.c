@@ -615,7 +615,7 @@ sume_read_reg_result(struct sume_port *sume_port, struct sume_ifreq *sifr)
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_TX_SG_ADDR_LO_REG_OFF), (adapter->recv[i]->buf_hw_addr & 0xFFFFFFFF));
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_TX_SG_ADDR_HI_REG_OFF), ((adapter->recv[i]->buf_hw_addr >> 32) & 0xFFFFFFFF));
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_TX_SG_LEN_REG_OFF), 4 * adapter->recv[i]->num_sg);
-    bus_dmamap_sync(adapter->recv[1]->my_tag, adapter->recv[1]->my_map, BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+    bus_dmamap_sync(adapter->recv[i]->my_tag, adapter->recv[i]->my_map, BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
 	p32 = (uint32_t *)adapter->recv[i]->buf_addr + 3; // after LO, HI, LEN
 	if (le32toh(*(p32+2)) != adapter->send[i]->rtag) {
