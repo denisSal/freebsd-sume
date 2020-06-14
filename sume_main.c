@@ -272,11 +272,95 @@ sume_netdev_alloc(struct sume_adapter *adapter, unsigned int port)
 	return (0);
 }
 
+static void
+callback_dma(void *arg, bus_dma_segment_t *segs, int nseg, int err)
+{
+        if (err) {
+                printf("DMA error\n");
+                return;
+        }
+
+        *(bus_addr_t *) arg = segs[0].ds_addr;
+}
+
 static int
 sume_probe_riffa_buffer(const struct sume_adapter *adapter, 
 		struct riffa_chnl_dir ***p, const char *dir)
 {
-	// dummy function for now
+	struct riffa_chnl_dir **rp;
+	bus_addr_t hw_addr;
+	int error, i;
+	device_t dev = adapter->dev;
+
+	error = ENOMEM;
+	*p = (struct riffa_chnl_dir **) malloc(adapter->num_chnls * sizeof(struct riffa_chnl_dir *), M_SUME, M_ZERO | M_WAITOK);
+	if (*p == NULL) {
+		device_printf(dev, "%s: malloc(%s) failed.\n", __func__, dir);
+		return (error);
+	}
+
+	rp = *p;
+	/* Allocate the chnl_dir structs themselves. */
+	for (i = 0; i < adapter->num_chnls; i++) {
+		/* One direction. */
+		rp[i] = (struct riffa_chnl_dir *)
+		    malloc(sizeof(struct riffa_chnl_dir), M_SUME, M_ZERO | M_WAITOK);
+		if (rp[i] == NULL) {
+			device_printf(dev, "%s: malloc(%s[%d]) riffa_chnl_dir "
+			    "failed.\n", __func__, dir, i);
+			return (error);
+		}
+
+		int err = bus_dma_tag_create(bus_get_dma_tag(dev),
+						4, 0,
+						BUS_SPACE_MAXADDR,
+						BUS_SPACE_MAXADDR,
+						NULL, NULL,
+						adapter->sg_buf_size, // CHECK SIZE?
+						1,
+						adapter->sg_buf_size, // SIZE
+						0,
+						NULL,
+						NULL,
+						&rp[i]->my_tag);
+
+		if (err) {
+			device_printf(dev, "%s: bus_dma_tag_create(%s[%d]) failed.\n", __func__, dir, i);
+			return (err);
+		}
+
+		err = bus_dmamem_alloc(rp[i]->my_tag, (void **) &rp[i]->buf_addr, BUS_DMA_WAITOK | BUS_DMA_COHERENT | BUS_DMA_ZERO, &rp[i]->my_map);
+		if (err) {
+			device_printf(dev, "%s: bus_dmamem_alloc(%s[%d]) rp[i]->buf_addr failed.\n", __func__, dir, i);
+			return (err);
+		}
+
+		bzero(rp[i]->buf_addr, adapter->sg_buf_size);
+
+		err = bus_dmamap_load(rp[i]->my_tag, rp[i]->my_map, rp[i]->buf_addr, adapter->sg_buf_size, callback_dma, &hw_addr, BUS_DMA_NOWAIT);
+		if (err) {
+			device_printf(dev, "%s: bus_dmamap_load(%s[%d]) hw_addr failed.\n", __func__, dir, i);
+			return (err);
+		}
+		rp[i]->buf_hw_addr = hw_addr;
+
+		rp[i]->bouncebuf_len = PAGE_SIZE;
+		rp[i]->bouncebuf = malloc(rp[i]->bouncebuf_len, M_SUME, M_WAITOK);
+		if (rp[i]->bouncebuf == NULL) {
+			device_printf(dev, "%s: malloc(%s[%d]) bouncebuffer failed.\n", __func__, dir, i);
+			return (error);
+		}
+
+		/* Initialize state. */
+//#ifndef SUME_GLOBAL_LOCK
+//		spin_lock_init(&rp[i]->lock);
+//#endif
+//		init_waitqueue_head(&rp[i]->waitq);
+
+		rp[i]->rtag = -3;
+		rp[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
+	}
+
 	return (0);
 }
 
@@ -297,7 +381,26 @@ static void
 sume_remove_riffa_buffer(const struct sume_adapter *adapter,
     struct riffa_chnl_dir **pp)
 {
-	// dummy function for now
+	int i;
+
+	for (i = 0; i < adapter->num_chnls; i++) {
+		if (pp[i] == NULL)
+			continue;
+
+		/* Wakeup anyone asleep before the waitq goes boom. */
+		/* XXX-BZ not really good enough. */
+		//wake_up_interruptible(&pp[i]->waitq);
+
+		if (pp[i]->bouncebuf != NULL)
+			free(pp[i]->bouncebuf, M_SUME);
+
+		if (pp[i]->buf_hw_addr != 0) {
+			bus_dmamem_free(pp[i]->my_tag, pp[i]->buf_addr, pp[i]->my_map);
+			pp[i]->buf_hw_addr = 0;
+		}
+
+		free(pp[i], M_SUME);
+	}
 }
 
 static void
