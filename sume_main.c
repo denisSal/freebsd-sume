@@ -42,6 +42,8 @@
 #include <net/if_var.h>
 #include <net/if_types.h>
 
+#include <sys/endian.h>
+
 #include "adapter.h"
 
 #define PCI_VENDOR_ID_XILINX 0x10ee
@@ -72,6 +74,11 @@ TUNABLE_INT("sume.nports", &sume_nports);
 static int mod_event(module_t, int, void *);
 void sume_intr_handler(void *);
 static int sume_intr_filter(void *);
+static int
+sume_if_ioctl(struct ifnet *, unsigned long, caddr_t);
+static int sume_riffa_fill_sg_buf(struct sume_adapter *,
+    struct riffa_chnl_dir *, enum dma_data_direction,
+    unsigned long long);
 
 static inline unsigned int read_reg(struct sume_adapter *, int);
 static inline void write_reg(struct sume_adapter *, int, unsigned int);
@@ -256,7 +263,7 @@ sume_netdev_alloc(struct sume_adapter *adapter, unsigned int port)
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
 
 	//ifp->if_init = sume_if_init;
-	//ifp->if_ioctl = sume_if_ioctl;
+	ifp->if_ioctl = sume_if_ioctl;
 
 	sume_port->adapter = adapter;
 	sume_port->netdev = ifp;
@@ -470,6 +477,198 @@ sume_attach(device_t dev)
 
 error:
 	sume_detach(dev);
+
+	return (error);
+}
+
+/* Helper functions. */
+static int
+sume_riffa_fill_sg_buf(struct sume_adapter *adapter,
+    struct riffa_chnl_dir *p, enum dma_data_direction dir,
+    unsigned long long len)
+{
+//	struct scatterlist sgl, *sg;
+	uint32_t *sgtablep;
+//	unsigned long long len_rem;
+//	int i, num_sg;
+
+	sgtablep = (uint32_t *) p->buf_addr;
+
+	sgtablep[0] = (p->buf_hw_addr + 3*sizeof(uint32_t)) & 0xffffffff;
+	sgtablep[1] = ((p->buf_hw_addr + 3*sizeof(uint32_t)) >> 32) & 0xffffffff;
+	sgtablep[2] = 4;
+
+//	num_sg = 0;
+//	len_rem = len;
+//
+//	if (len > 0) {
+//		unsigned long long l;
+//
+//		l = (len_rem > p->bouncebuf_len) ? p->bouncebuf_len : len_rem;
+//		len_rem -= l;
+//
+//		/* We just use the one hard coded bounce buffer for now. */
+//		sg_init_table(&sgl, 1);
+//		sg_set_buf(&sgl, p->bouncebuf, l);
+//		num_sg = dma_map_sg(&adapter->pdev->dev, &sgl, 1, dir);
+//		sgtablep = p->buf_addr;
+//		if (num_sg > adapter->num_sg) {
+//			printk(KERN_INFO "%s: num_sg(%d) exceeds adapter->"
+//			    "num_sg(%d).\n", __func__, num_sg, adapter->num_sg);
+//			/* XXX-BZ recover? */
+//		}
+//		for_each_sg(&sgl, sg, num_sg, i) {
+//			sgtablep[(i * 4) + 0] = SUME_RIFFA_SG_LO_ADDR(sg);
+//			sgtablep[(i * 4) + 1] = SUME_RIFFA_SG_HI_ADDR(sg);
+//			sgtablep[(i * 4) + 2] = SUME_RIFFA_SG_LEN(sg);
+//		}
+//	} else {
+//		/* Really nothing we need to do, right? */
+//	}
+//
+//	/* Remember the number of segments. */
+//	p->num_sg = num_sg;
+	p->num_sg = 1;
+
+	return (0);
+}
+
+/*
+ * Request a register read or write (depending on strb).
+ * If strb is set (0x1f) this will result in a register write,
+ * otherwise this will result in a register read request at the given
+ * address and the result will need to be DMAed back.
+ */
+static int
+sume_initiate_reg_write(struct sume_port *sume_port, struct sume_ifreq *sifr,
+    uint32_t strb)
+{
+
+	struct sume_adapter *adapter;
+	uint32_t *p32;
+	int error, i;
+	int last, offset;
+
+	adapter = sume_port->adapter;
+
+	i = SUME_RIFFA_CHANNEL_REG(sume_port);
+
+	//p32 = (uint32_t *)adapter->send[i]->bouncebuf;
+	p32 = (uint32_t *)adapter->send[i]->buf_addr + 3; // after LO, HI, LEN
+	*p32++ = htole32(sifr->addr);
+	*p32++ = htole32(sifr->val);
+	/* Tag to indentify request. */
+	*p32++ = htole32(++adapter->send[i]->rtag);
+	*p32 = htole32(strb);		/* This is STRB; write a val. */
+	adapter->send[i]->len = 4;		/* words */
+
+	/* Let the FPGA know about the transfer. */
+	offset = 0;
+	last = 1;
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_OFFLAST_REG_OFF), ((offset << 1) | (last & 0x01)));
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_LEN_REG_OFF), adapter->send[i]->len);		/* words */
+
+	/* Fill the S/G map. */
+	error = sume_riffa_fill_sg_buf(adapter,
+	    adapter->send[i], DMA_TO_DEVICE,
+	    SUME_RIFFA_LEN(adapter->send[i]->len));
+	if (error != 0) {
+		device_printf(adapter->dev, "%s: failed to map S/G buffer\n", __func__);
+		return (EFAULT);
+	}
+
+	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_LO_REG_OFF), (adapter->send[i]->buf_hw_addr & 0xFFFFFFFF));
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_HI_REG_OFF), ((adapter->send[i]->buf_hw_addr >> 32) & 0xFFFFFFFF));
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_LEN_REG_OFF), 4 * adapter->send[i]->num_sg);
+	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map, BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+
+    return (0);
+}
+
+static int
+sume_read_reg_result(struct sume_port *sume_port, struct sume_ifreq *sifr)
+{
+	struct sume_adapter *adapter;
+	int error, i;
+	uint32_t *p32;
+
+	adapter = sume_port->adapter;
+
+	i = SUME_RIFFA_CHANNEL_REG(sume_port);
+	/* Let the FPGA know about the transfer. */
+
+	/* Get offset and length. */
+	adapter->recv[i]->offlast = read_reg( adapter, RIFFA_CHNL_REG(i, RIFFA_TX_OFFLAST_REG_OFF));
+	adapter->recv[i]->len = read_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_TX_LEN_REG_OFF));
+
+	/* Fill the S/G map. */
+	error = sume_riffa_fill_sg_buf(adapter,
+	    adapter->recv[i], DMA_FROM_DEVICE,
+	    SUME_RIFFA_LEN(adapter->recv[i]->len));
+	if (error != 0) {
+		device_printf(adapter->dev, "%s: failed to map S/G buffer\n", __func__);
+		return (EFAULT);
+	}
+
+	bus_dmamap_sync(adapter->recv[i]->my_tag, adapter->recv[i]->my_map, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_TX_SG_ADDR_LO_REG_OFF), (adapter->recv[i]->buf_hw_addr & 0xFFFFFFFF));
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_TX_SG_ADDR_HI_REG_OFF), ((adapter->recv[i]->buf_hw_addr >> 32) & 0xFFFFFFFF));
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_TX_SG_LEN_REG_OFF), 4 * adapter->recv[i]->num_sg);
+    bus_dmamap_sync(adapter->recv[1]->my_tag, adapter->recv[1]->my_map, BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+
+	p32 = (uint32_t *)adapter->recv[i]->buf_addr + 3; // after LO, HI, LEN
+	if (le32toh(*(p32+2)) != adapter->send[i]->rtag) {
+		device_printf(adapter->dev, "%s: rtag error: 0x%08x 0x%08x\n", __func__,
+		    le32toh(*(p32+2)), adapter->send[i]->rtag);
+	}
+
+	sifr->val = le32toh(*(p32+1));
+
+    return (0);
+}
+
+static int
+sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
+{
+	struct sume_port *sume_port;
+	struct ifreq *ifr = (struct ifreq *)data;
+	struct sume_ifreq sifr;
+	int error = 0, len;
+	struct sume_adapter *adapter;
+
+	sume_port = ifp->if_softc;
+	if (sume_port == NULL || sume_port->adapter == NULL)
+		return (EINVAL);
+
+	adapter = sume_port->adapter;
+
+	switch (cmd) {
+	    case SUME_IOCTL_CMD_WRITE_REG:
+		copyin(ifr_data_get_ptr(ifr), &sifr, sizeof(sifr));
+		error = sume_initiate_reg_write(sume_port, &sifr, 0x1f);
+		len = read_reg(adapter, RIFFA_CHNL_REG(1, RIFFA_RX_TNFR_LEN_REG_OFF));
+		printf("Wrote len = %d\n", len);
+		break;
+
+	case SUME_IOCTL_CMD_READ_REG:
+		copyin(ifr_data_get_ptr(ifr), &sifr, sizeof(sifr));
+		error = sume_initiate_reg_write(sume_port, &sifr, 0x00);
+		len = read_reg(adapter, RIFFA_CHNL_REG(1, RIFFA_RX_TNFR_LEN_REG_OFF));
+		printf("Wrote len = %d\n", len);
+		error = sume_read_reg_result(sume_port, &sifr);
+		len = read_reg(adapter, RIFFA_CHNL_REG(1, RIFFA_RX_TNFR_LEN_REG_OFF));
+		printf("Read len = %d\n", len);
+		error = copyout(&sifr, ifr_data_get_ptr(ifr), sizeof(sifr));
+		if (error != 0) {
+		    error = EINVAL;
+		}
+		break;
+
+	default:
+		error = ENOTSUP;
+		break;
+	}
 
 	return (error);
 }

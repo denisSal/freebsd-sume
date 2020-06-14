@@ -133,6 +133,11 @@ struct riffa_chnl_dir {
 	bus_dmamap_t			my_map;
 };
 
+struct sume_ifreq {
+	uint32_t        addr;
+	uint32_t        val;
+};
+
 struct sume_port {
 	struct sume_adapter	*adapter;
 	struct ifnet		*netdev;
