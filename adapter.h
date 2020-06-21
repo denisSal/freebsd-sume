@@ -131,6 +131,11 @@ struct riffa_chnl_dir {
 
 	bus_dma_tag_t			my_tag;
 	bus_dmamap_t			my_map;
+
+	struct mtx			send_sleep;
+	struct mtx			recv_sleep;
+	struct mtx			lock;
+	int				event;
 };
 
 struct sume_ifreq {
@@ -158,9 +163,16 @@ struct sume_adapter {
 	int			num_chnls;
 	int			num_sg;
 	int			sg_buf_size;
-	struct sume_port	port[4];
+	volatile int		running;
 	struct ifnet		*netdev[4];
+	struct sume_port	port[4];
+	struct mtx		lock;
+	struct mtx		rcv_wait;
+	struct mtx		wr_wait;
 
 	struct riffa_chnl_dir	**recv;
 	struct riffa_chnl_dir	**send;
+
+	unsigned int		vect0;
+	unsigned int		vect1;
 };
