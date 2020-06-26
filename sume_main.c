@@ -1101,9 +1101,6 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 	case SIOCAIFADDR:
 		if (atomic_load_int(&adapter->running) == 0)
 			break;
-		mtx_lock_spin(&adapter->lock);
-		ifp->if_drv_flags |= IFF_DRV_RUNNING;
-		mtx_unlock_spin(&adapter->lock);
 		break;
 
 	case SUME_IOCTL_CMD_WRITE_REG:
@@ -1221,6 +1218,8 @@ sume_netdev_alloc(struct sume_adapter *adapter, unsigned int port)
 	ifmedia_init(&sume_port->media, IFM_IMASK, sume_media_change, sume_media_status);
 	ifmedia_add(&sume_port->media, IFM_ETHER | IFM_AUTO, 0, NULL);
 	ifmedia_set(&sume_port->media, IFM_ETHER | IFM_AUTO);
+
+	ifp->if_drv_flags |= IFF_DRV_RUNNING;
 
 	return (0);
 }
