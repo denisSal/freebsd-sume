@@ -1173,6 +1173,7 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 
     return;
 }
+
 static void
 sume_qflush(struct ifnet *netdev)
 {
@@ -1197,7 +1198,7 @@ sume_netdev_alloc(struct sume_adapter *adapter, unsigned int port)
 	ifp->if_softc = sume_port;
 
 	if_initname(ifp, SUME_ETH_DEVICE_NAME, port);
-	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST; // XXX
+	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST; // XXX check
 
 	ifp->if_init = sume_if_init;
 	ifp->if_ioctl = sume_if_ioctl;
@@ -1346,6 +1347,8 @@ sume_attach(device_t dev)
 		    "Using max.\n", __func__, sume_nports, SUME_PORTS_MAX);
 		sume_nports = SUME_PORTS_MAX;
 	}
+
+	mtx_init(&adapter->lock, "Global lock", NULL, MTX_SPIN);
 
 	atomic_set_int(&adapter->running, 0);
 
