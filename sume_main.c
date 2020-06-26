@@ -51,6 +51,7 @@
 #include <sys/types.h>
 #include <machine/atomic.h>
 
+#include <net/if_media.h>
 #include "adapter.h"
 
 #define PCI_VENDOR_ID_XILINX 0x10ee
@@ -129,6 +130,243 @@ sume_probe(device_t dev)
 	return (ENXIO);
 }
 
+static int
+sume_rx_build_mbuf(struct sume_adapter *adapter, int i, unsigned int len)
+{
+	struct mbuf *m;
+	struct ifnet *netdev;
+	struct sume_port *sume_port;
+	int np;
+	uint32_t t1, t2, *p32;
+	uint16_t sport, dport, dp, plen, magic, *p16;
+	uint8_t *p8 = (char *) adapter->recv[i]->buf_addr + 3*sizeof(uint32_t);
+	device_t dev = adapter->dev;
+
+	int sume_16boff = 0;
+
+	/* The metadata header is 16 bytes. */
+	if (len < 16) {
+		device_printf(dev, "%s: short frame (%d)\n",
+		    __func__, len);
+		return (EINVAL);
+	}
+
+	p32 = (uint32_t *) p8;
+	p16 = (uint16_t *) p8;
+	sport = le16toh(*(p16 + 0));
+	dport = le16toh(*(p16 + 1));
+	plen =  le16toh(*(p16 + 2));
+	magic = le16toh(*(p16 + 3));
+
+#if 0
+	printf("Received data: sport = 0x%x\n", sport);
+	printf("Received data: dport = 0x%x\n", dport);
+	printf("Received data: plen = 0x%x\n", plen);
+	printf("Received data: magic = 0x%x\n", magic);
+#endif
+
+	t1 = le32toh(*(p32 + 2));
+	t2 = le32toh(*(p32 + 3));
+
+	if ((16 + sume_16boff * sizeof(uint16_t) + plen) > len ||
+	    magic != SUME_RIFFA_MAGIC) {
+		device_printf(dev, "%s: corrupted packet (16 + %zd + %d > %d || "
+		    "magic 0x%04x != 0x%04x)\n", __func__,
+		    sume_16boff * sizeof(uint16_t), plen, len, magic,
+		    SUME_RIFFA_MAGIC);
+#if 0 /* XXX FreeBSD - different check so don't return */
+		return(ENOMEM);
+#endif
+	}
+
+#ifndef	NO_SINGLE_PORT_NIC
+	/* On the single-port test NIC project s/dport are always 0. */
+	if (sport == 0 && dport == 0) {
+		np = 0;
+	} else
+#endif
+	{
+		np = 0;
+		dp = dport & 0xaa;
+		while ((dp & 0x2) == 0) {
+			np++;
+			dp >>= 2;
+		}
+	}
+	if (np > sume_nports) {
+		device_printf(dev, "%s: invalid destination port 0x%04x (%d)\n",
+		    __func__, dport, np);
+		return (EINVAL);
+	}
+	netdev = adapter->netdev[np];
+
+	/* If the interface is down, well, we are done. */
+	sume_port = netdev->if_softc;
+	if (sume_port->port_up == 0) {
+		device_printf(dev, "Device not up.\n");
+		return (ENETDOWN);
+	}
+
+	printf("Building mbuf with length: %d\n", plen);
+	m = m_getm(NULL, plen, M_NOWAIT, MT_DATA);
+    if (m == NULL) {
+        free(m, M_SUME);
+        return (ENOMEM);
+    }
+
+	/* Copy the data in at the right offset. */
+    m_copyback(m, 0, plen, (void *) (p8 + 16));
+	m->m_pkthdr.rcvif = netdev;
+
+#if 0
+	int z;
+	printf("DMA DATA: ");
+	for (z = 0; z < plen + 4; z++)
+			printf("0x%02x ", *(p8 + z));
+	printf("\n");
+#endif
+
+	(*netdev->if_input)(netdev, m);
+
+	return (0);
+}
+
+/* Packet to transmit. */
+static int
+sume_start_xmit(struct ifnet *netdev, struct mbuf *skb)
+{
+	struct sume_adapter *adapter;
+	struct sume_port *sume_port;
+	uint32_t *p32;
+	uint16_t *p16, sport, dport;
+	uint8_t *p8;
+	int error, i, last, offset;
+	device_t dev;
+
+	/*
+	 * Currently [some SUME/NF10 converter block] cannot handle
+	 * payload with less than 256 bits.
+	 */
+	/* XXX Find FreeBSD equivalent */
+	/* An easy workaround is to pad the packets to min. Eth. frame len. */
+	//if (skb_padto(skb, ETH_ZLEN) != 0) {
+		//netdev->stats.tx_dropped++;
+		//return (NETDEV_TX_OK);
+	//}
+	/* padto() doesn't update the length, just [allocs] zeros bits. */
+	//if (skb->len < ETH_ZLEN)
+		//skb->len = ETH_ZLEN;
+
+	sume_port = netdev->if_softc;
+	adapter = sume_port->adapter;
+	i = sume_port->riffa_channel;
+	dev = adapter->dev;
+
+	mtx_lock_spin(&adapter->send[i]->lock);
+
+	p8 = (uint8_t *) adapter->send[i]->buf_addr + 3*sizeof(uint32_t);
+	/*
+	 * Check state. It's the best we can do for now.
+	 */
+	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
+		mtx_unlock_spin(&adapter->send[i]->lock);
+		m_freem(skb);
+		return (ENETDOWN);
+	}
+	/* Clear the recovery flag. */
+	adapter->send[i]->flags &= ~SUME_CHAN_STATE_RECOVERY_FLAG;
+
+	/*
+	 * XXX-BZ Going through the bounce buffer in that direction is kind
+	 * of stupid but KISS for now;  should check alignment and only
+	 * bounce if needed.
+	 */
+	/* Make sure we fit with the 16 bytes metadata. */
+	/* XXX FreeBSD different check */
+#if 0
+	if ((skb->m_len + 16) > adapter->send[i]->bouncebuf_len) {
+		mtx_unlock_spin(&adapter->send[i]->lock);
+		device_printf(dev, "%s: Packet too big for bounce buffer (%d)\n",
+		    __func__, skb->m_len);
+		free(skb, M_SUME);
+		return (ENOMEM);
+	}
+#endif
+
+	printf("Trying to send %d bytes to nf%d\n", skb->m_len, sume_port->port);
+	p16 = (uint16_t *) p8;
+	p32 = (uint32_t *) p8;
+
+	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+
+	/* Skip the first 4 * sizeof(uint32_t) bytes for the metadata. */
+	memcpy(p8+4*sizeof(uint32_t), skb->m_data, skb->m_len);
+	adapter->send[i]->len = 4;		/* words */
+	adapter->send[i]->len += (skb->m_len / 4) + ((skb->m_len % 4 == 0) ? 0 : 1);
+
+#if 0
+	int z;
+	printf("DMA DATA: ");
+	for (z = 0; z < skb->m_len + 4; z++)
+			printf("0x%02x ", *(p8 + z));
+	printf("\n");
+#endif
+
+	/* Fill in the metadata. */
+	sport = 1 << (sume_port->port * 2 + 1);	/* CPU(DMA) ports are odd. */
+	dport = 1 << (sume_port->port * 2);	/* MAC ports are even. */
+	*p16++ = htole16(sport);
+	*p16++ = htole16(dport);
+	*p16++ = htole16(skb->m_len);
+	*p16++ = htole16(SUME_RIFFA_MAGIC);
+	*(p32 + 2) = htole32(0);	/* Timestamp. */
+	*(p32 + 3) = htole32(0);	/* Timestamp. */
+
+	/* Let the FPGA know about the transfer. */
+	offset = 0;
+	last = 1;
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_OFFLAST_REG_OFF),
+	    ((offset << 1) | (last & 0x01)));
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_LEN_REG_OFF),
+	    adapter->send[i]->len);		/* words */
+
+	/* Fill the S/G map. */
+	error = sume_riffa_fill_sg_buf(adapter,
+	    adapter->send[i], DMA_TO_DEVICE,
+	    SUME_RIFFA_LEN(adapter->send[i]->len));
+	if (error) {
+		mtx_unlock_spin(&adapter->send[i]->lock);
+		device_printf(dev, "%s: failed to map S/G buffer\n", __func__);
+		m_freem(skb);
+		return (ENETDOWN);
+	}
+
+	/* Update the state before intiating the DMA to avoid races. */
+	adapter->send[i]->state = SUME_RIFFA_CHAN_STATE_READY;
+
+	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	/* DMA. */
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_LO_REG_OFF),
+	    (adapter->send[i]->buf_hw_addr & 0xFFFFFFFF));
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_HI_REG_OFF),
+	    ((adapter->send[i]->buf_hw_addr >> 32) & 0xFFFFFFFF));
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_LEN_REG_OFF),
+	    4 * adapter->send[i]->num_sg);
+
+	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map, BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+
+	mtx_unlock_spin(&adapter->send[i]->lock);
+
+	/* We can free as long as we use the bounce buffer. */
+	/*
+	 * XXX-BZ otherwise we should once we unmap and call
+	 * netdev_completed_queue().
+	 */
+	m_freem(skb);
+
+	return (0);
+}
+
 void
 sume_intr_handler(void *arg)
 {
@@ -202,9 +440,6 @@ sume_intr_handler(void *arg)
 						    SUME_RIFFA_CHAN_STATE_IDLE;
 					else if (i ==
 					    SUME_RIFFA_CHANNEL_REG(adapter)) {
-						//wake_up_interruptible(
-						    //&adapter->send[i]->waitq);
-						//mtx_unlock_spin(&adapter->send[i]->send_sleep);
 						wakeup(&adapter->send[i]->event);
 						printf("Wake up send thread!\n");
 					} else {
@@ -232,7 +467,6 @@ sume_intr_handler(void *arg)
 				break;
 			default:
 				printf("WARNON!\n");
-				//WARN_ON(1);
 			}
 			loops++;
 		}
@@ -243,10 +477,8 @@ sume_intr_handler(void *arg)
 			device_printf(dev, "%s: ignoring vect=0x%08x "
 			    "during TX; not in recovery; state=%d loops=%d\n",
 			    __func__, vect, adapter->send[i]->state, loops);
-		//SUME_UNLOCK_TX(adapter, i, flags);
 		mtx_unlock_spin(&adapter->send[i]->lock);
 
-		//SUME_LOCK_RX(adapter, i, flags);
 		mtx_lock_spin(&adapter->recv[i]->lock);
 		loops = 0;
 		while ((vect & ((1 << ((5 * i) + 0)) | (1 << ((5 * i) + 1)) |
@@ -368,16 +600,12 @@ sume_intr_handler(void *arg)
 					 */
 					if (i ==
 					   SUME_RIFFA_CHANNEL_DATA(adapter)) {
-						//error = sume_rx_build_skb(
-						    //adapter, i, len << 2);
-						printf("build skb before recv\n");
+						error = sume_rx_build_mbuf(
+						    adapter, i, len << 2);
 						adapter->recv[i]->state =
 						    SUME_RIFFA_CHAN_STATE_IDLE;
 					} else if (i ==
 					    SUME_RIFFA_CHANNEL_REG(adapter)) {
-						//wake_up_interruptible(
-						   //&adapter->recv[i]->waitq);
-						//mtx_unlock_spin(&adapter->recv[i]->recv_sleep);
 						wakeup(&adapter->recv[i]->event);
 						printf("Wake up recv thread!\n");
 					} else {
@@ -575,6 +803,36 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 }
 
 static void
+sume_if_down(void *arg)
+{
+	struct ifnet *ifp = arg;
+	struct sume_port *sume_port = ifp->if_softc;
+
+	if (!sume_port->port_up)
+		return; // already down
+
+	if_down(ifp);
+	sume_port->port_up = 0;
+
+	printf("SUME nf%d down.\n", sume_port->port);
+}
+
+static void
+sume_if_up(void *arg)
+{
+	struct ifnet *ifp = arg;
+	struct sume_port *sume_port = ifp->if_softc;
+
+	if (sume_port->port_up)
+		return; // already up
+
+	if_up(ifp);
+	sume_port->port_up = 1;
+
+	printf("SUME nf%d up.\n", sume_port->port);
+}
+
+static void
 sume_if_init(void *arg)
 {
 	printf("DEBUG: %s\n", __func__);
@@ -592,8 +850,8 @@ sume_riffa_fill_sg_buf(struct sume_adapter *adapter,
 
 	sgtablep[0] = (p->buf_hw_addr + 3*sizeof(uint32_t)) & 0xffffffff;
 	sgtablep[1] = ((p->buf_hw_addr + 3*sizeof(uint32_t)) >> 32) & 0xffffffff;
-	//sgtablep[2] = 4;
 	sgtablep[2] = len;
+
 	p->num_sg = 1;
 
 	return (0);
@@ -819,6 +1077,35 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 	adapter = sume_port->adapter;
 
 	switch (cmd) {
+	case SIOCSIFFLAGS:
+		if (atomic_load_int(&adapter->running) == 0)
+			break;
+		mtx_lock_spin(&adapter->lock);
+		if (ifp->if_flags & IFF_UP) {
+			if (ifp->if_drv_flags & IFF_DRV_RUNNING)
+				sume_if_up(ifp);
+		} else if (ifp->if_drv_flags & IFF_DRV_RUNNING)
+			sume_if_down(ifp);
+		mtx_unlock_spin(&adapter->lock);
+		break;
+
+	case SIOCGIFXMEDIA:
+		if (atomic_load_int(&adapter->running) == 0)
+			break;
+		mtx_lock_spin(&adapter->lock);
+		ifmedia_ioctl(ifp, ifr, &sume_port->media, cmd);
+		mtx_unlock_spin(&adapter->lock);
+		break;
+
+	case SIOCSIFADDR:
+	case SIOCAIFADDR:
+		if (atomic_load_int(&adapter->running) == 0)
+			break;
+		mtx_lock_spin(&adapter->lock);
+		ifp->if_drv_flags |= IFF_DRV_RUNNING;
+		mtx_unlock_spin(&adapter->lock);
+		break;
+
 	case SUME_IOCTL_CMD_WRITE_REG:
 		error = copyin(ifr_data_get_ptr(ifr), &sifr, sizeof(sifr));
 		if (error) {
@@ -858,6 +1145,45 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 }
 
 static int
+sume_media_change(struct ifnet *ifp)
+{
+	struct sume_port *sume_port = ifp->if_softc;
+    struct ifmedia *ifm = &sume_port->media;
+
+    if (IFM_TYPE(ifm->ifm_media) != IFM_ETHER)
+        return (EINVAL);
+    if (IFM_SUBTYPE(ifm->ifm_media) == IFM_AUTO)
+        ifp->if_baudrate = ifmedia_baudrate(IFM_ETHER | IFM_AUTO);
+    else
+        ifp->if_baudrate = ifmedia_baudrate(ifm->ifm_media);
+
+	return (0);
+}
+
+static void
+sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
+{
+	struct sume_port *sume_port = ifp->if_softc;
+    struct ifmedia *ifm = &sume_port->media;
+
+    if (ifm->ifm_cur->ifm_media == (IFM_ETHER | IFM_AUTO) &&
+        sume_port->port_up)
+        ifmr->ifm_active = IFM_ETHER | IFM_AUTO;
+    else
+        ifmr->ifm_active = ifm->ifm_cur->ifm_media;
+
+	ifmr->ifm_status |= IFM_ACTIVE;
+
+    return;
+}
+static void
+sume_qflush(struct ifnet *netdev)
+{
+	// dummy qflush
+	//printf("qflush\n");
+}
+
+static int
 sume_netdev_alloc(struct sume_adapter *adapter, unsigned int port)
 {
 	struct ifnet *ifp;	
@@ -866,9 +1192,9 @@ sume_netdev_alloc(struct sume_adapter *adapter, unsigned int port)
 
 	ifp = if_alloc(IFT_ETHER);
 	if (ifp == NULL) {
-                device_printf(dev, "Cannot allocate ifnet\n");
-                return (ENOMEM);
-        }
+		device_printf(dev, "Cannot allocate ifnet\n");
+		return (ENOMEM);
+	}
 
 	adapter->netdev[port] = ifp;
 	ifp->if_softc = sume_port;
@@ -878,6 +1204,8 @@ sume_netdev_alloc(struct sume_adapter *adapter, unsigned int port)
 
 	ifp->if_init = sume_if_init;
 	ifp->if_ioctl = sume_if_ioctl;
+	ifp->if_transmit = sume_start_xmit;
+	ifp->if_qflush = sume_qflush;
 
 	sume_port->adapter = adapter;
 	sume_port->netdev = ifp;
@@ -889,6 +1217,10 @@ sume_netdev_alloc(struct sume_adapter *adapter, unsigned int port)
 	uint8_t hw_addr[ETHER_ADDR_LEN] = DEFAULT_ETHER_ADDRESS;
 	hw_addr[ETHER_ADDR_LEN-1] = port;
 	ether_ifattach(ifp, hw_addr);
+
+	ifmedia_init(&sume_port->media, IFM_IMASK, sume_media_change, sume_media_status);
+	ifmedia_add(&sume_port->media, IFM_ETHER | IFM_AUTO, 0, NULL);
+	ifmedia_set(&sume_port->media, IFM_ETHER | IFM_AUTO);
 
 	return (0);
 }
@@ -1107,8 +1439,12 @@ sume_detach(device_t dev)
 	sume_remove_riffa_buffers(adapter);
 
 	for (i = 0; i < sume_nports; i++) {
-		if (adapter->netdev[i] != NULL)
+		if (adapter->port[i].port_up)
+			if_down(adapter->netdev[i]);
+		ifmedia_removeall(&adapter->port[i].media);
+		if (adapter->netdev[i] != NULL) {
 			ether_ifdetach(adapter->netdev[i]);
+		}
 	}
 
 	rc = bus_generic_detach(dev);

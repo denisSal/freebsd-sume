@@ -150,6 +150,7 @@ struct sume_port {
 	unsigned int		port_up;
 	unsigned int		msg_enable;
 	unsigned int		riffa_channel;
+	struct ifmedia		media;
 };
 
 struct sume_adapter {
