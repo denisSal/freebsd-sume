@@ -28,8 +28,10 @@ Writing a device driver on top of the iflib would inherently provide support for
   - Driver initializes DMA segments, 4 network interfaces.
   - Simple read/write operations from/to SUME specific memory regions (registers).
   - Interrupt driven read/write operations.
+  
+## What works, but has bugs or should work better?
   - Resources locking.
+  - Network packets RX/TX.
 
 ## What doesn't work (yet)?
-  - Network packets RX/TX.
   - Netmap integration.
