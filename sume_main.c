@@ -1,4 +1,5 @@
 /*-
+ * Copyright (c) 2015 Bjoern A. Zeeb
  * Copyright (c) 2020 Denis Salopek
  * All rights reserved
  *
@@ -73,6 +74,62 @@ static driver_t sume_driver = {
 	sizeof(struct sume_adapter)
 };
 
+/*
+* The DMA engine for SUME generates interrupts for each RX/TX transaction.
+* Depending on the channel (0 if packet transaction, 1 if register transaction)
+* the used bits of the interrupt vector will be the lowest or the second lowest
+* 5 bits.
+*
+* When receiving packets from SUME (RX):
+* (1) SUME received a packet on one of the interfaces.
+* (2) SUME generates an interrupt vector, bit 00001 is set (channel 0 - new RX
+*     transaction).
+* (3) We read the length of the incoming packet and the offset (is offset even
+*     used for anything except checking boundaries?) along with the 'last' flag
+*     from the SUME registers.
+* (4) We prepare for the DMA transaction by setting the bouncebuffer on the
+*     address buf_addr. For now, this is how it's done:
+*     - First 3*sizeof(uint32_t) bytes are: lower and upper 32 bits of physical
+*     address where we want the data to arrive (buf_addr[0] and buf_addr[1]),
+*     and length of incoming data (buf_addr[2]).
+*     - Data will start right after, at buf_addr+3*sizeof(uint32_t). The
+*     physical address buf_hw_addr is a block of contiguous memory mapped to
+*     buf_addr, so we can set the incoming data's physical address (buf_addr[0]
+*     and buf_addr[1]) to buf_hw_addr+3*sizeof(uint32_t).
+* (5) We notify SUME that the bouncebuffer is ready for the transaction by
+*     writing the lower/upper physical address buf_hw_addr to the SUME
+*     registers RIFFA_TX_SG_ADDR_LO_REG_OFF and RIFFA_TX_SG_ADDR_HI_REG_OFF as
+*     well as the number of segments to the register RIFFA_TX_SG_LEN_REG_OFF.
+* (6) SUME generates an interrupt vector, bit 00010 is set (channel 0 -
+*     bouncebuffer received).
+* (7) SUME generates an interrupt vector, bit 00100 is set (channel 0 -
+*     transaction is done).
+* (8) We read the first 16 bytes (metadata) of the received data and note the
+*     incoming interface so we can later forward it to the right one in the OS
+*     (nf0, nf1, nf2 or nf3).
+* (9) We create an mbuf and copy the data from the bouncebuffer to the mbuf and
+*     set the mbuf rcvif to the incoming interface.
+* (10) We forward the mbuf to the appropriate interface via ifp->if_input.
+*
+* When sending packets to SUME (TX):
+* (1) The OS calls sume_start_xmit() function on TX.
+* (2) We get the mbuf packet data and copy it to the
+*     buf_addr+3*sizeof(uint32_t) + metadata 16 bytes.
+* (3) We create the metadata based on the output interface and copy it to the
+*     buf_addr+3*sizeof(uint32_t).
+* (4) We write the offset/last and length of the packet to the SUME registers
+*     RIFFA_RX_OFFLAST_REG_OFF and RIFFA_RX_LEN_REG_OFF.
+* (5) We fill the bouncebuffer by filling the first 3*sizeof(uint32_t) bytes
+*     with the physical address and length just as in RX step (4).
+* (6) We notify SUME that the bouncebuffer is ready by writing to SUME
+*     registers RIFFA_RX_SG_ADDR_LO_REG_OFF, RIFFA_RX_SG_ADDR_HI_REG_OFF and
+*     RIFFA_RX_SG_LEN_REG_OFF just as in RX step (5).
+* (7) SUME generates an interrupt vector, bit 01000 is set (channel 0 -
+*     bouncebuffer is read).
+* (8) SUME generates an interrupt vector, bit 10000 is set (channel 0 -
+*     transaction is done).
+*/
+
 MALLOC_DECLARE(M_SUME);
 MALLOC_DEFINE(M_SUME, "sume", "NetFPGA SUME device driver");
 
@@ -130,6 +187,14 @@ sume_probe(device_t dev)
 	return (ENXIO);
 }
 
+/* Building mbuf for packet received from SUME. We expect to receive 'len'
+ * bytes of data (including metadata) written from the bouncebuffer address
+ * buf_addr+3*sizeof(uint32_t). Metadata will tell us which SUME interface
+ * received the packet (sport will be 1, 2, 4 or 8), the packet length (plen),
+ * and the magic word needs to be 0xcafe. When we have the packet data, we
+ * create an mbuf and copy the data to it using m_copyback() function, set the
+ * correct interface to rcvif and send the packet to the OS with if_input.
+ */
 static int
 sume_rx_build_mbuf(struct sume_adapter *adapter, int i, unsigned int len)
 {
@@ -231,7 +296,14 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, unsigned int len)
 	return (0);
 }
 
-/* Packet to transmit. */
+/* Packet to transmit. We take the packet data from the mbuf and copy it to the
+ * bouncebuffer address buf_addr+3*sizeof(uint32_t)+16. The 16 bytes before the
+ * packet data are for metadata: sport/dport (depending on our source
+ * interface), packet length and magic 0xcafe. We tell the SUME about the
+ * transfer, fill the first 3*sizeof(uint32_t) bytes of the bouncebuffer with
+ * the informaton about the start and length of the packet and trigger the
+ * transaction.
+ */
 static int
 sume_start_xmit(struct ifnet *netdev, struct mbuf *m)
 {
@@ -367,6 +439,41 @@ sume_start_xmit(struct ifnet *netdev, struct mbuf *m)
 	return (0);
 }
 
+/* SUME interrupt handler for when we get a valid interrupt from the board.
+ * There are 2 interrupt vectors, we use vect0 when the number of channels is
+ * lower then 7 and vect1 otherwise. Theoretically, we can receive interrupt
+ * for any of the available channels, but RIFFA DMA uses only 2: 0 and 1, so we
+ * use only vect0. The vector is a 32 bit number, using 5 bits for every
+ * channel, the least significant bits correspond to channel 0 and the next 5
+ * bits correspond to channel 1. Vector bits for RX/TX are:
+ * RX
+ * bit 0 - new transaction from SUME
+ * bit 1 - SUME received our bouncebuffer address
+ * bit 2 - SUME copied the received data to our bouncebuffer, transaction done
+ * TX
+ * bit 3 - SUME received our bouncebuffer address
+ * bit 4 - SUME copied the data from our bouncebuffer, transaction done
+ *
+ * There are two finite state machines (one for TX, one for RX). We loop
+ * through channels 0 and 1 to check and our current state and which interrupt
+ * bit is set.
+ * TX
+ * SUME_RIFFA_CHAN_STATE_IDLE: waiting for the first TX transaction.
+ * SUME_RIFFA_CHAN_STATE_READY: we prepared (filled with data) the bouncebuffer
+ * and triggered the SUME for the TX transaction. Waiting for interrupt bit 3
+ * to go to the next state.
+ * SUME_RIFFA_CHAN_STATE_READ: waiting for interrupt bit 4 (for SUME to send
+ * our packet). Then we get the length of the sent data and go back to the
+ * IDLE state.
+ * RX
+ * SUME_RIFFA_CHAN_STATE_IDLE: waiting for the interrupt bit 0 (new RX
+ * transaction). When we get it, we prepare our bouncebuffer for reading and
+ * trigger the SUME to start the transaction. Go to the next state.
+ * SUME_RIFFA_CHAN_STATE_READY: waiting for the interrupt bit 1 (SUME got our
+ * bouncebuffer). Go to the next state.
+ * SUME_RIFFA_CHAN_STATE_READ: SUME copied data and our bouncebuffer is ready,
+ * we can build the mbuf and go back to the IDLE state.
+ */
 void
 sume_intr_handler(void *arg)
 {
@@ -651,6 +758,10 @@ sume_intr_handler(void *arg)
 	}
 }
 
+/* Filtering interrupts. We wait for the adapter to go into the 'running' state
+ * to start accepting them. Also, we ignore them if the first two bits of the
+ * vector are set.
+ */
 static int
 sume_intr_filter(void *arg)
 {
