@@ -183,3 +183,12 @@ struct sume_adapter {
 	unsigned int		vect0;
 	unsigned int		vect1;
 };
+
+struct metadata {
+	uint16_t		sport;
+	uint16_t		dport;
+	uint16_t		plen;
+	uint16_t		magic;
+	uint32_t		t1;
+	uint32_t		t2;
+};
