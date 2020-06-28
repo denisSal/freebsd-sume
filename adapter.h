@@ -45,9 +45,9 @@
 #define SUME_UNLOCK_TX(adapter, i, flags)
 
 /* Currently SUME only uses two fixed channels for all port traffic and regs. */
-#define SUME_RIFFA_CHANNEL_DATA(sp)	0
-#define SUME_RIFFA_CHANNEL_REG(sp)	1       /* See description at top. */
-#define SUME_RIFFA_CHANNELS(sp)		2
+#define SUME_RIFFA_CHANNEL_DATA		0
+#define SUME_RIFFA_CHANNEL_REG		1       /* See description at top. */
+#define SUME_RIFFA_CHANNELS		2
 
 /* RIFFA constants. */
 #define RIFFA_MAX_CHNLS			12
@@ -98,6 +98,12 @@
 #define	SUME_RIFFA_SG_HI_ADDR(sg)	\
     ((sg_dma_address(sg) >> 32) & 0xffffffff);
 #define	SUME_RIFFA_SG_LEN(sg)		(sg_dma_len(sg) >> 2)	/* Words. */
+
+#define SUME_MSI_RXQUE(i)	(1 << ((5 * i) + 0))
+#define SUME_MSI_RXBUF(i)	(1 << ((5 * i) + 1))
+#define SUME_MSI_RXDONE(i)	(1 << ((5 * i) + 2))
+#define SUME_MSI_TXBUF(i)	(1 << ((5 * i) + 3))
+#define SUME_MSI_TXDONE(i)	(1 << ((5 * i) + 4))
 
 /* find where this is defined */
 enum dma_data_direction {

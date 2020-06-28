@@ -233,9 +233,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, unsigned int len)
 			"|| magic 0x%04x != 0x%04x)\n", __func__,
 			sume_16boff * sizeof(uint16_t), plen, len, magic,
 			SUME_RIFFA_MAGIC);
-#if 1 /* XXX FreeBSD - different check so don't return for now */
 		return(ENOMEM);
-#endif
 	}
 
 #ifndef	NO_SINGLE_PORT_NIC
@@ -460,7 +458,7 @@ sume_intr_handler(void *arg)
 
 		mtx_lock_spin(&adapter->send[i]->lock);
 		loops = 0;
-		while ((vect & ((1 << ((5 * i) + 3)) | (1 << ((5 * i) + 4)))) &&
+		while ((vect & (SUME_MSI_TXBUF(i) | SUME_MSI_TXDONE(i))) &&
 			loops <= 5) {
 			device_printf(dev, "%s: TX ch %d state %u vect = "
 				"0x%08x\n", __func__, i,
@@ -469,15 +467,15 @@ sume_intr_handler(void *arg)
 			case SUME_RIFFA_CHAN_STATE_IDLE:
 				break;
 			case SUME_RIFFA_CHAN_STATE_READY:
-				if (vect & (1 << ((5 * i) + 3))) {
+				if (vect & SUME_MSI_TXBUF(i)) {
 					adapter->send[i]->state =
 						SUME_RIFFA_CHAN_STATE_READ;
-					vect &= ~(1 << ((5 * i) + 3));
+					vect &= ~SUME_MSI_TXBUF(i);
 				} else {
 					device_printf(dev, "%s: ch %d "
 						"unexpected interrupt in "
 						"send+3 state %u: "
-						"vect=0x%08x\n", __func__,
+						"vect = 0x%08x\n", __func__,
 						i, adapter->send[i]->state,
 						vect);
 					adapter->send[i]->flags |=
@@ -485,40 +483,38 @@ sume_intr_handler(void *arg)
 				}
 				break;
 			case SUME_RIFFA_CHAN_STATE_READ:
-				if (vect & (1 << ((5 * i) + 4))) {
+				if (vect & SUME_MSI_TXDONE(i)) {
 					adapter->send[i]->state =
 						SUME_RIFFA_CHAN_STATE_LEN;
 
 					len = read_reg(adapter,
 						RIFFA_CHNL_REG(i,
 						RIFFA_RX_TNFR_LEN_REG_OFF));
-					if (i ==
-						SUME_RIFFA_CHANNEL_DATA(adapter))
+					if (i == SUME_RIFFA_CHANNEL_DATA)
 						adapter->send[i]->state =
 							SUME_RIFFA_CHAN_STATE_IDLE;
-					else if (i ==
-						SUME_RIFFA_CHANNEL_REG(adapter)) {
-							wakeup(&adapter->send[i]->event);
-							printf("Wake up send "
-								"thread!\n");
+					else if (i == SUME_RIFFA_CHANNEL_REG) {
+						wakeup(&adapter->send[i]->event);
+						printf("Wake up send "
+							"thread!\n");
 					} else {
 						device_printf(dev, "%s: "
 							"interrupt on ch %d "
 							"unexpected in send+4 "
 							"state %u: "
-							"vect=0x%08x\n",
+							"vect = 0x%08x\n",
 							__func__, i,
 							adapter->send[i]->state,
 							vect);
 						adapter->send[i]->flags |=
 							SUME_CHAN_STATE_RECOVERY_FLAG;
 					}
-					vect &= ~(1 << ((5 * i) + 4));
+					vect &= ~SUME_MSI_TXDONE(i);
 				} else {
 					device_printf(dev, "%s: ch %d "
 						"unexpected interrupt in "
 						"send+4 state %u: "
-						"vect=0x%08x\n", __func__,
+						"vect = 0x%08x\n", __func__,
 						i, adapter->send[i]->state,
 						vect);
 					adapter->send[i]->flags |=
@@ -533,25 +529,25 @@ sume_intr_handler(void *arg)
 			loops++;
 		}
 
-		if ((vect & ((1 << ((5 * i) + 3)) | (1 << ((5 * i) + 4)))) &&
+		if ((vect & (SUME_MSI_TXBUF(i) | SUME_MSI_TXDONE(i))) &&
 			((adapter->send[i]->flags & SUME_CHAN_STATE_RECOVERY_FLAG)
 			!= 0))
-			device_printf(dev, "%s: ignoring vect=0x%08x during "
-				"TX; not in recovery; state=%d loops=%d\n",
+			device_printf(dev, "%s: ignoring vect = 0x%08x during "
+				"TX; not in recovery; state = %d loops = %d\n",
 				__func__, vect, adapter->send[i]->state,
 				loops);
 		mtx_unlock_spin(&adapter->send[i]->lock);
 
 		mtx_lock_spin(&adapter->recv[i]->lock);
 		loops = 0;
-		while ((vect & ((1 << ((5 * i) + 0)) | (1 << ((5 * i) + 1)) |
-			(1 << ((5 * i) + 2)))) && loops < 5) {
+		while ((vect & (SUME_MSI_RXQUE(i) | SUME_MSI_RXBUF(i) |
+			SUME_MSI_RXDONE(i))) && loops < 5) {
 			device_printf(dev, "%s: RX ch %d state %u vect = "
 				"0x%08x\n", __func__, i,
 				adapter->recv[i]->state, vect);
 			switch (adapter->recv[i]->state) {
 			case SUME_RIFFA_CHAN_STATE_IDLE:
-				if (vect & (1 << ((5 * i) + 0))) {
+				if (vect & SUME_MSI_RXQUE(i)) {
 					unsigned long max_ptr;
 
 					/* Clear recovery state. */
@@ -629,7 +625,7 @@ sume_intr_handler(void *arg)
 
 					adapter->recv[i]->state =
 						SUME_RIFFA_CHAN_STATE_READY;
-					vect &= ~(1 << ((5 * i) + 0));
+					vect &= ~SUME_MSI_RXQUE(i);
 				} else {
 					device_printf(dev, "%s: ch %d "
 						"unexpected interrupt in "
@@ -641,10 +637,10 @@ sume_intr_handler(void *arg)
 				}
 				break;
 			case SUME_RIFFA_CHAN_STATE_READY:
-				if (vect & (1 << ((5 * i) + 1))) {
+				if (vect & SUME_MSI_RXBUF(i)) {
 					adapter->recv[i]->state =
 						SUME_RIFFA_CHAN_STATE_READ;
-					vect &= ~(1 << ((5 * i) + 1));
+					vect &= ~SUME_MSI_RXBUF(i);
 				} else {
 					device_printf(dev, "%s: ch %d "
 						"unexpected interrupt in "
@@ -656,7 +652,7 @@ sume_intr_handler(void *arg)
 				}
 				break;
 			case SUME_RIFFA_CHAN_STATE_READ:
-				if (vect & (1 << ((5 * i) + 2))) {
+				if (vect & SUME_MSI_RXDONE(i)) {
 					len = read_reg(adapter,
 						RIFFA_CHNL_REG(i,
 						RIFFA_TX_TNFR_LEN_REG_OFF));
@@ -665,14 +661,12 @@ sume_intr_handler(void *arg)
 					 * Remember, len and recv[i]->len
 					 * are words.
 					 */
-					if (i ==
-					   SUME_RIFFA_CHANNEL_DATA(adapter)) {
+					if (i == SUME_RIFFA_CHANNEL_DATA) {
 						error = sume_rx_build_mbuf(
 							adapter, i, len << 2);
 						adapter->recv[i]->state =
 							SUME_RIFFA_CHAN_STATE_IDLE;
-					} else if (i ==
-						SUME_RIFFA_CHANNEL_REG(adapter)) {
+					} else if (i == SUME_RIFFA_CHANNEL_REG) {
 						wakeup(&adapter->recv[i]->event);
 						printf("Wake up recv "
 							"thread!\n");
@@ -688,7 +682,7 @@ sume_intr_handler(void *arg)
 						adapter->recv[i]->flags |=
 							SUME_CHAN_STATE_RECOVERY_FLAG;
 					}
-					vect &= ~(1 << ((5 * i) + 2));
+					vect &= ~SUME_MSI_RXDONE(i);
 
 				} else {
 					device_printf(dev, "%s: ch %d "
@@ -708,8 +702,8 @@ sume_intr_handler(void *arg)
 			loops++;
 		}
 
-		if ((vect & ((1 << ((5 * i) + 0)) | (1 << ((5 * i) + 1)) |
-			(1 << ((5 * i) + 2)))) &&
+		if ((vect & (SUME_MSI_RXQUE(i) | SUME_MSI_RXBUF(i) |
+			SUME_MSI_RXDONE(i))) &&
 			((adapter->recv[i]->flags &
 			  SUME_CHAN_STATE_RECOVERY_FLAG)
 			!= 0))
@@ -807,8 +801,8 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 		INTR_TYPE_NET, sume_intr_filter, sume_intr_handler, adapter,
 		&adapter->irq.tag);
 	if (error) {
-		device_printf(dev, "failed to setup interrupt for rid %d, name "
-			"%s: %d\n", adapter->irq.rid, "SUME_INTR", error);
+		device_printf(dev, "failed to setup interrupt for rid %d, name"
+			" %s: %d\n", adapter->irq.rid, "SUME_INTR", error);
 		return (ENXIO);
 	} else
 		bus_describe_intr(dev, adapter->irq.res, adapter->irq.tag,
@@ -833,7 +827,7 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 		PCIEM_LINK_CTL_RCB), 2);
 
 	reg = read_reg(adapter, RIFFA_INFO_REG_OFF);
-	adapter->num_chnls =	SUME_RIFFA_CHANNELS(reg & 0xf);
+	adapter->num_chnls =	SUME_RIFFA_CHANNELS;
 	adapter->num_sg =	RIFFA_SG_ELEMS * ((reg >> 19) & 0xf);
 	adapter->sg_buf_size =	RIFFA_SG_BUF_SIZE * ((reg >> 19) & 0xf);
 
@@ -913,14 +907,6 @@ sume_if_up(void *arg)
 	printf("SUME nf%d up.\n", sume_port->port);
 }
 
-#if 0
-static void
-sume_if_init(void *arg)
-{
-	printf("DEBUG: %s\n", __func__);
-}
-#endif
-
 /* Helper functions. */
 static int
 sume_riffa_fill_sg_buf(struct sume_adapter *adapter,
@@ -954,7 +940,7 @@ sume_reg_wr_locked(struct sume_adapter *adapter, int i)
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_OFFLAST_REG_OFF),
 		((offset << 1) | (last & 0x01)));
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_LEN_REG_OFF),
-		adapter->send[i]->len);		/* words */
+		adapter->send[i]->len);	/* words */
 
 	/* Fill the S/G map. */
 	error = sume_riffa_fill_sg_buf(adapter,
@@ -1006,7 +992,7 @@ sume_initiate_reg_write(struct sume_port *sume_port, struct sume_ifreq *sifr,
 	 * 3. Start the DMA process.
 	 * 4. Sleep and wait for result and return success or error.
 	 */
-	i = SUME_RIFFA_CHANNEL_REG(sume_port);
+	i = SUME_RIFFA_CHANNEL_REG;
 	mtx_lock_spin(&adapter->send[i]->send_sleep);
 
 	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
@@ -1020,7 +1006,7 @@ sume_initiate_reg_write(struct sume_port *sume_port, struct sume_ifreq *sifr,
 	/* Tag to indentify request. */
 	*p32++ = htole32(++adapter->send[i]->rtag);
 	*p32 = htole32(strb);		/* This is STRB; write a val. */
-	adapter->send[i]->len = 4;		/* words */
+	adapter->send[i]->len = 4;	/* words */
 
 	error = sume_reg_wr_locked(adapter, i);
 	if (error) {
@@ -1080,7 +1066,7 @@ sume_read_reg_result(struct sume_port *sume_port, struct sume_ifreq *sifr)
 	 * 2. Read DMA results.
 	 * 3. Update state on *TX* to IDLE to allow next read to start.
 	 */
-	i = SUME_RIFFA_CHANNEL_REG(sume_port);
+	i = SUME_RIFFA_CHANNEL_REG;
 
 	/* We only need to be woken up at the end of the transaction. */
 	/* Timeout after 1s. */
@@ -1259,7 +1245,6 @@ sume_netdev_alloc(struct sume_adapter *adapter, unsigned int port)
 	if_initname(ifp, SUME_ETH_DEVICE_NAME, port);
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
 
-	//ifp->if_init = sume_if_init;
 	ifp->if_ioctl = sume_if_ioctl;
 	ifp->if_transmit = sume_start_xmit;
 	ifp->if_qflush = sume_qflush;
@@ -1267,7 +1252,7 @@ sume_netdev_alloc(struct sume_adapter *adapter, unsigned int port)
 	sume_port->adapter = adapter;
 	sume_port->netdev = ifp;
 	sume_port->port = port;
-	sume_port->riffa_channel = SUME_RIFFA_CHANNEL_DATA(sume_port);
+	sume_port->riffa_channel = SUME_RIFFA_CHANNEL_DATA;
 
 	adapter->netdev[port] = ifp;
 
