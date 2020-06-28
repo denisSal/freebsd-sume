@@ -1195,8 +1195,8 @@ sume_media_change(struct ifnet *ifp)
 
 	if (IFM_TYPE(ifm->ifm_media) != IFM_ETHER)
 		return (EINVAL);
-	if (IFM_SUBTYPE(ifm->ifm_media) == IFM_AUTO)
-		ifp->if_baudrate = ifmedia_baudrate(IFM_ETHER | IFM_AUTO);
+	if (IFM_SUBTYPE(ifm->ifm_media) == IFM_10G_SR)
+		ifp->if_baudrate = ifmedia_baudrate(IFM_ETHER | IFM_10G_SR);
 	else
 		ifp->if_baudrate = ifmedia_baudrate(ifm->ifm_media);
 
@@ -1209,9 +1209,9 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 	struct sume_port *sume_port = ifp->if_softc;
 	struct ifmedia *ifm = &sume_port->media;
 
-	if (ifm->ifm_cur->ifm_media == (IFM_ETHER | IFM_AUTO) &&
+	if (ifm->ifm_cur->ifm_media == (IFM_ETHER | IFM_10G_SR) &&
 		sume_port->port_up)
-		ifmr->ifm_active = IFM_ETHER | IFM_AUTO;
+		ifmr->ifm_active = IFM_ETHER | IFM_10G_SR;
 	else
 		ifmr->ifm_active = ifm->ifm_cur->ifm_media;
 
@@ -1262,8 +1262,8 @@ sume_netdev_alloc(struct sume_adapter *adapter, unsigned int port)
 
 	ifmedia_init(&sume_port->media, IFM_IMASK, sume_media_change,
 		sume_media_status);
-	ifmedia_add(&sume_port->media, IFM_ETHER | IFM_AUTO, 0, NULL);
-	ifmedia_set(&sume_port->media, IFM_ETHER | IFM_AUTO);
+	ifmedia_add(&sume_port->media, IFM_ETHER | IFM_10G_SR, 0, NULL);
+	ifmedia_set(&sume_port->media, IFM_ETHER | IFM_10G_SR);
 
 	ifp->if_drv_flags |= IFF_DRV_RUNNING;
 
