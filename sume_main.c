@@ -233,7 +233,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, unsigned int len)
 
 /* Packet to transmit. */
 static int
-sume_start_xmit(struct ifnet *netdev, struct mbuf *skb)
+sume_start_xmit(struct ifnet *netdev, struct mbuf *m)
 {
 	struct sume_adapter *adapter;
 	struct sume_port *sume_port;
@@ -270,7 +270,7 @@ sume_start_xmit(struct ifnet *netdev, struct mbuf *skb)
 	 */
 	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
 		mtx_unlock_spin(&adapter->send[i]->lock);
-		m_freem(skb);
+		m_freem(m);
 		return (ENETDOWN);
 	}
 	/* Clear the recovery flag. */
@@ -284,30 +284,30 @@ sume_start_xmit(struct ifnet *netdev, struct mbuf *skb)
 	/* Make sure we fit with the 16 bytes metadata. */
 	/* XXX FreeBSD different check */
 #if 0
-	if ((skb->m_len + 16) > adapter->send[i]->bouncebuf_len) {
+	if ((m->m_len + 16) > adapter->send[i]->bouncebuf_len) {
 		mtx_unlock_spin(&adapter->send[i]->lock);
 		device_printf(dev, "%s: Packet too big for bounce buffer (%d)\n",
-		    __func__, skb->m_len);
-		free(skb, M_SUME);
+		    __func__, m->m_len);
+		free(m, M_SUME);
 		return (ENOMEM);
 	}
 #endif
 
-	printf("Trying to send %d bytes to nf%d\n", skb->m_len, sume_port->port);
+	printf("Trying to send %d bytes to nf%d\n", m->m_len, sume_port->port);
 	p16 = (uint16_t *) p8;
 	p32 = (uint32_t *) p8;
 
 	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 	/* Skip the first 4 * sizeof(uint32_t) bytes for the metadata. */
-	memcpy(p8+4*sizeof(uint32_t), skb->m_data, skb->m_len);
+	memcpy(p8+4*sizeof(uint32_t), m->m_data, m->m_len);
 	adapter->send[i]->len = 4;		/* words */
-	adapter->send[i]->len += (skb->m_len / 4) + ((skb->m_len % 4 == 0) ? 0 : 1);
+	adapter->send[i]->len += (m->m_len / 4) + ((m->m_len % 4 == 0) ? 0 : 1);
 
 #if 0
 	int z;
 	printf("DMA DATA: ");
-	for (z = 0; z < skb->m_len + 4; z++)
+	for (z = 0; z < m->m_len + 4; z++)
 			printf("0x%02x ", *(p8 + z));
 	printf("\n");
 #endif
@@ -317,7 +317,7 @@ sume_start_xmit(struct ifnet *netdev, struct mbuf *skb)
 	dport = 1 << (sume_port->port * 2);	/* MAC ports are even. */
 	*p16++ = htole16(sport);
 	*p16++ = htole16(dport);
-	*p16++ = htole16(skb->m_len);
+	*p16++ = htole16(m->m_len);
 	*p16++ = htole16(SUME_RIFFA_MAGIC);
 	*(p32 + 2) = htole32(0);	/* Timestamp. */
 	*(p32 + 3) = htole32(0);	/* Timestamp. */
@@ -337,7 +337,7 @@ sume_start_xmit(struct ifnet *netdev, struct mbuf *skb)
 	if (error) {
 		mtx_unlock_spin(&adapter->send[i]->lock);
 		device_printf(dev, "%s: failed to map S/G buffer\n", __func__);
-		m_freem(skb);
+		m_freem(m);
 		return (ENETDOWN);
 	}
 
@@ -362,7 +362,7 @@ sume_start_xmit(struct ifnet *netdev, struct mbuf *skb)
 	 * XXX-BZ otherwise we should once we unmap and call
 	 * netdev_completed_queue().
 	 */
-	m_freem(skb);
+	m_freem(m);
 
 	return (0);
 }
