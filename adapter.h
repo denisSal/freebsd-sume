@@ -145,7 +145,7 @@ struct sume_ifreq {
 
 struct sume_port {
 	struct sume_adapter	*adapter;
-	struct ifnet		*netdev;
+	struct ifnet		*ifp;
 	unsigned int		port;
 	unsigned int		port_up;
 	unsigned int		msg_enable;
@@ -165,7 +165,7 @@ struct sume_adapter {
 	int			num_sg;
 	int			sg_buf_size;
 	volatile int		running;
-	struct ifnet		*netdev[4];
+	struct ifnet		*ifp[4];
 	struct sume_port	port[4];
 	struct mtx		lock;
 

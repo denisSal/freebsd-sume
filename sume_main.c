@@ -201,7 +201,7 @@ static int
 sume_rx_build_mbuf(struct sume_adapter *adapter, int i, unsigned int len)
 {
 	struct mbuf *m;
-	struct ifnet *netdev;
+	struct ifnet *ifp;
 	struct sume_port *sume_port;
 	int np;
 	uint32_t t1, t2;
@@ -248,10 +248,10 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, unsigned int len)
 		    "(%d)\n", __func__, dport, np);
 		return (EINVAL);
 	}
-	netdev = adapter->netdev[np];
+	ifp = adapter->ifp[np];
 
 	/* If the interface is down, well, we are done. */
-	sume_port = netdev->if_softc;
+	sume_port = ifp->if_softc;
 	if (sume_port->port_up == 0) {
 		device_printf(dev, "Device not up.\n");
 		return (ENETDOWN);
@@ -268,9 +268,9 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, unsigned int len)
 
 	/* Copy the data in at the right offset. */
 	m_copyback(m, 0, plen, (void *) (p8 + 16));
-	m->m_pkthdr.rcvif = netdev;
+	m->m_pkthdr.rcvif = ifp;
 
-	(*netdev->if_input)(netdev, m);
+	(*ifp->if_input)(ifp, m);
 
 	return (0);
 }
@@ -284,7 +284,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, unsigned int len)
  * transaction.
  */
 static int
-sume_start_xmit(struct ifnet *netdev, struct mbuf *m)
+sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 {
 	struct sume_adapter *adapter;
 	struct sume_port *sume_port;
@@ -294,7 +294,7 @@ sume_start_xmit(struct ifnet *netdev, struct mbuf *m)
 	struct metadata *mdata;
 	int flags = MTX_RECURSE;
 
-	sume_port = netdev->if_softc;
+	sume_port = ifp->if_softc;
 	adapter = sume_port->adapter;
 	i = sume_port->riffa_channel;
 	dev = adapter->dev;
@@ -1200,14 +1200,14 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 }
 
 static void
-sume_qflush(struct ifnet *netdev)
+sume_qflush(struct ifnet *ifp)
 {
 
 	// dummy qflush
 }
 
 static int
-sume_netdev_alloc(struct sume_adapter *adapter, unsigned int port)
+sume_ifp_alloc(struct sume_adapter *adapter, unsigned int port)
 {
 	struct ifnet *ifp;	
 	struct sume_port *sume_port = &adapter->port[port];	
@@ -1219,7 +1219,7 @@ sume_netdev_alloc(struct sume_adapter *adapter, unsigned int port)
 		return (ENOMEM);
 	}
 
-	adapter->netdev[port] = ifp;
+	adapter->ifp[port] = ifp;
 	ifp->if_softc = sume_port;
 
 	if_initname(ifp, SUME_ETH_DEVICE_NAME, port);
@@ -1230,11 +1230,11 @@ sume_netdev_alloc(struct sume_adapter *adapter, unsigned int port)
 	ifp->if_qflush = sume_qflush;
 
 	sume_port->adapter = adapter;
-	sume_port->netdev = ifp;
+	sume_port->ifp = ifp;
 	sume_port->port = port;
 	sume_port->riffa_channel = SUME_RIFFA_CHANNEL_DATA;
 
-	adapter->netdev[port] = ifp;
+	adapter->ifp[port] = ifp;
 
 	uint8_t hw_addr[ETHER_ADDR_LEN] = DEFAULT_ETHER_ADDRESS;
 	hw_addr[ETHER_ADDR_LEN-1] = port;
@@ -1385,7 +1385,7 @@ sume_attach(device_t dev)
 
 	/* Now do the network interfaces. */
 	for (i = 0; i < sume_nports; i++) {
-		error = sume_netdev_alloc(adapter, i);
+		error = sume_ifp_alloc(adapter, i);
 		if (error != 0)
 			goto error;
 	}
@@ -1451,10 +1451,10 @@ sume_detach(device_t dev)
 
 	for (i = 0; i < sume_nports; i++) {
 		if (adapter->port[i].port_up)
-			if_down(adapter->netdev[i]);
+			if_down(adapter->ifp[i]);
 		ifmedia_removeall(&adapter->port[i].media);
-		if (adapter->netdev[i] != NULL) {
-			ether_ifdetach(adapter->netdev[i]);
+		if (adapter->ifp[i] != NULL) {
+			ether_ifdetach(adapter->ifp[i]);
 		}
 	}
 
