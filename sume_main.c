@@ -146,7 +146,7 @@ static int sume_riffa_fill_sg_buf(struct sume_adapter *,
 static inline unsigned int read_reg(struct sume_adapter *, int);
 static inline void write_reg(struct sume_adapter *, int, unsigned int);
 
-//#define DEBUG // replace with sysctl variable
+#define DEBUG // replace with sysctl variable
 
 struct {
 	uint16_t device;
@@ -442,13 +442,13 @@ sume_intr_handler(void *arg)
 	 */
 	for (i = 0; i < adapter->num_chnls; i++) {
 		if (i < 6)
-			vect = vect0;
+			vect = vect0 >> (5 * i);
 		else
-			vect = vect1;
+			vect = vect1 >> (5 * i);
 
 		loops = 0;
-		while ((vect & (SUME_MSI_TXBUF(i) | SUME_MSI_TXDONE(i))) &&
-			loops <= 5) {
+		while ((vect & (SUME_MSI_TXBUF | SUME_MSI_TXDONE)) &&
+		    loops <= 5) {
 #ifdef DEBUG
 			device_printf(dev, "%s: TX ch %d state %u vect = "
 			    "0x%08x\n", __func__, i, adapter->send[i]->state,
@@ -458,10 +458,10 @@ sume_intr_handler(void *arg)
 			case SUME_RIFFA_CHAN_STATE_IDLE:
 				break;
 			case SUME_RIFFA_CHAN_STATE_READY:
-				if (vect & SUME_MSI_TXBUF(i)) {
+				if (vect & SUME_MSI_TXBUF) {
 					adapter->send[i]->state =
 					    SUME_RIFFA_CHAN_STATE_READ;
-					vect &= ~SUME_MSI_TXBUF(i);
+					vect &= ~SUME_MSI_TXBUF;
 				} else {
 					device_printf(dev, "%s: ch %d "
 					    "unexpected interrupt in send+3 "
@@ -473,7 +473,7 @@ sume_intr_handler(void *arg)
 				}
 				break;
 			case SUME_RIFFA_CHAN_STATE_READ:
-				if (vect & SUME_MSI_TXDONE(i)) {
+				if (vect & SUME_MSI_TXDONE) {
 					adapter->send[i]->state =
 					    SUME_RIFFA_CHAN_STATE_LEN;
 
@@ -498,7 +498,7 @@ sume_intr_handler(void *arg)
 						adapter->send[i]->flags |=
 						    SUME_CHAN_STATE_RECOVERY_FLAG;
 					}
-					vect &= ~SUME_MSI_TXDONE(i);
+					vect &= ~SUME_MSI_TXDONE;
 				} else {
 					device_printf(dev, "%s: ch %d "
 					    "unexpected interrupt in send+4 "
@@ -517,7 +517,7 @@ sume_intr_handler(void *arg)
 			loops++;
 		}
 
-		if ((vect & (SUME_MSI_TXBUF(i) | SUME_MSI_TXDONE(i))) &&
+		if ((vect & (SUME_MSI_TXBUF | SUME_MSI_TXDONE)) &&
 		    ((adapter->send[i]->flags & SUME_CHAN_STATE_RECOVERY_FLAG)
 		    != 0))
 			device_printf(dev, "%s: ignoring vect = 0x%08x during "
@@ -525,8 +525,8 @@ sume_intr_handler(void *arg)
 			    __func__, vect, adapter->send[i]->state, loops);
 
 		loops = 0;
-		while ((vect & (SUME_MSI_RXQUE(i) | SUME_MSI_RXBUF(i) |
-			SUME_MSI_RXDONE(i))) && loops < 5) {
+		while ((vect & (SUME_MSI_RXQUE | SUME_MSI_RXBUF |
+			SUME_MSI_RXDONE)) && loops < 5) {
 #ifdef DEBUG
 			device_printf(dev, "%s: RX ch %d state %u vect = "
 			    "0x%08x\n", __func__, i, adapter->recv[i]->state,
@@ -534,7 +534,7 @@ sume_intr_handler(void *arg)
 #endif
 			switch (adapter->recv[i]->state) {
 			case SUME_RIFFA_CHAN_STATE_IDLE:
-				if (vect & SUME_MSI_RXQUE(i)) {
+				if (vect & SUME_MSI_RXQUE) {
 					unsigned long max_ptr;
 
 					/* Clear recovery state. */
@@ -575,10 +575,9 @@ sume_intr_handler(void *arg)
 
 					/* Build and load S/G map. */
 					error = sume_riffa_fill_sg_buf(adapter,
-						adapter->recv[i],
-						DMA_FROM_DEVICE,
-						SUME_RIFFA_LEN(
-						adapter->recv[i]->len));
+					    adapter->recv[i], DMA_FROM_DEVICE,
+					    SUME_RIFFA_LEN(
+					    adapter->recv[i]->len));
 					if (error != 0) {
 						device_printf(dev, "%s: "
 						    "Failed to build S/G "
@@ -611,7 +610,7 @@ sume_intr_handler(void *arg)
 
 					adapter->recv[i]->state =
 					    SUME_RIFFA_CHAN_STATE_READY;
-					vect &= ~SUME_MSI_RXQUE(i);
+					vect &= ~SUME_MSI_RXQUE;
 				} else {
 					device_printf(dev, "%s: ch %d "
 					    "unexpected interrupt in recv+0 "
@@ -623,10 +622,10 @@ sume_intr_handler(void *arg)
 				}
 				break;
 			case SUME_RIFFA_CHAN_STATE_READY:
-				if (vect & SUME_MSI_RXBUF(i)) {
+				if (vect & SUME_MSI_RXBUF) {
 					adapter->recv[i]->state =
 					    SUME_RIFFA_CHAN_STATE_READ;
-					vect &= ~SUME_MSI_RXBUF(i);
+					vect &= ~SUME_MSI_RXBUF;
 				} else {
 					device_printf(dev, "%s: ch %d "
 					    "unexpected interrupt in recv+1 "
@@ -638,7 +637,7 @@ sume_intr_handler(void *arg)
 				}
 				break;
 			case SUME_RIFFA_CHAN_STATE_READ:
-				if (vect & SUME_MSI_RXDONE(i)) {
+				if (vect & SUME_MSI_RXDONE) {
 					len = read_reg(adapter,
 					    RIFFA_CHNL_REG(i,
 					    RIFFA_TX_TNFR_LEN_REG_OFF));
@@ -668,7 +667,7 @@ sume_intr_handler(void *arg)
 						adapter->recv[i]->flags |=
 						    SUME_CHAN_STATE_RECOVERY_FLAG;
 					}
-					vect &= ~SUME_MSI_RXDONE(i);
+					vect &= ~SUME_MSI_RXDONE;
 
 				} else {
 					device_printf(dev, "%s: ch %d "
@@ -688,8 +687,8 @@ sume_intr_handler(void *arg)
 			loops++;
 		}
 
-		if ((vect & (SUME_MSI_RXQUE(i) | SUME_MSI_RXBUF(i) |
-		    SUME_MSI_RXDONE(i))) && ((adapter->recv[i]->flags &
+		if ((vect & (SUME_MSI_RXQUE | SUME_MSI_RXBUF |
+		    SUME_MSI_RXDONE)) && ((adapter->recv[i]->flags &
 		    SUME_CHAN_STATE_RECOVERY_FLAG) != 0))
 			device_printf(dev, "%s: ignoring vect = 0x%08x "
 			    "during RX; not in recovery; state = %d, loops = "
@@ -988,7 +987,7 @@ sume_initiate_reg_write(struct sume_port *sume_port, struct sume_ifreq *sifr,
 	/* Tag to indentify request. */
 	*p32++ = htole32(++adapter->send[i]->rtag);
 	*p32 = htole32(strb);           /* This is STRB; write a val. */
-	adapter->send[i]->len = 4;	/* words */
+	adapter->send[i]->len = 4;	/* Words */
 
 	error = sume_reg_wr_locked(adapter, i);
 	if (error) {
@@ -1418,7 +1417,7 @@ error:
 
 static void
 sume_remove_riffa_buffer(const struct sume_adapter *adapter,
-	struct riffa_chnl_dir **pp)
+    struct riffa_chnl_dir **pp)
 {
 	int i;
 

@@ -100,11 +100,11 @@
     ((sg_dma_address(sg) >> 32) & 0xffffffff);
 #define	SUME_RIFFA_SG_LEN(sg)		(sg_dma_len(sg) >> 2)	/* Words. */
 
-#define SUME_MSI_RXQUE(i)		(1 << ((5 * i) + 0))
-#define SUME_MSI_RXBUF(i)		(1 << ((5 * i) + 1))
-#define SUME_MSI_RXDONE(i)		(1 << ((5 * i) + 2))
-#define SUME_MSI_TXBUF(i)		(1 << ((5 * i) + 3))
-#define SUME_MSI_TXDONE(i)		(1 << ((5 * i) + 4))
+#define SUME_MSI_RXQUE			(1 << 0)
+#define SUME_MSI_RXBUF			(1 << 1)
+#define SUME_MSI_RXDONE			(1 << 2)
+#define SUME_MSI_TXBUF			(1 << 3)
+#define SUME_MSI_TXDONE			(1 << 4)
 
 /* find where this is defined */
 enum dma_data_direction {
@@ -160,8 +160,8 @@ struct sume_adapter {
 	int			rid;
 	struct resource		*bar0_addr;
 	bus_size_t		bar0_len;
-        bus_space_tag_t		bt;
-        bus_space_handle_t	bh;
+	bus_space_tag_t		bt;
+	bus_space_handle_t	bh;
 	struct irq		irq;
 	int			num_chnls;
 	int			num_sg;
