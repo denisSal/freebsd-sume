@@ -129,8 +129,6 @@ struct riffa_chnl_dir {
 	unsigned int		offlast;
 	unsigned int		len;		/* words */
 	unsigned int		rtag;
-	uint32_t		*bouncebuf;
-	size_t			bouncebuf_len;
 
 	bus_dma_tag_t		my_tag;
 	bus_dmamap_t		my_map;

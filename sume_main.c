@@ -567,7 +567,7 @@ sume_intr_handler(void *arg)
 					    adapter->recv[i]->offlast) +
 					    SUME_RIFFA_LEN(
 					    adapter->recv[i]->len)) >
-					    adapter->recv[i]->bouncebuf_len) {
+					    adapter->sg_buf_size) {
 						device_printf(dev, "%s: "
 						    "receive buffer too "
 						    "small.\n", __func__);
@@ -1331,15 +1331,6 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 		}
 		rp[i]->buf_hw_addr = hw_addr;
 
-		rp[i]->bouncebuf_len = PAGE_SIZE;
-		rp[i]->bouncebuf = malloc(rp[i]->bouncebuf_len, M_SUME,
-			M_WAITOK);
-		if (rp[i]->bouncebuf == NULL) {
-			device_printf(dev, "%s: malloc(%s[%d]) bouncebuffer "
-				"failed.\n", __func__, dir, i);
-			return (error);
-		}
-
 		/* Initialize state. */
 		mtx_init(&rp[i]->send_sleep, "Send sleep", NULL, MTX_SPIN);
 		mtx_init(&rp[i]->recv_sleep, "Recv sleep", NULL, MTX_SPIN);
@@ -1424,9 +1415,6 @@ sume_remove_riffa_buffer(const struct sume_adapter *adapter,
 	for (i = 0; i < adapter->num_chnls; i++) {
 		if (pp[i] == NULL)
 			continue;
-
-		if (pp[i]->bouncebuf != NULL)
-			free(pp[i]->bouncebuf, M_SUME);
 
 		if (pp[i]->buf_hw_addr != 0) {
 			bus_dmamem_free(pp[i]->my_tag, pp[i]->buf_addr,
