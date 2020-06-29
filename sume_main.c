@@ -49,7 +49,6 @@
 
 #include <sys/lock.h>
 #include <sys/mutex.h>
-#include <sys/types.h>
 #include <machine/atomic.h>
 
 #include <net/if_media.h>
@@ -61,13 +60,14 @@
 static int sume_probe(device_t);
 static int sume_attach(device_t);
 static int sume_detach(device_t);
+
 static device_method_t sume_methods[] = {
 	DEVMETHOD(device_probe,		sume_probe),
 	DEVMETHOD(device_attach,	sume_attach),
 	DEVMETHOD(device_detach,	sume_detach),
-
 	DEVMETHOD_END
 };
+
 static driver_t sume_driver = {
 	"sume",
 	sume_methods,
@@ -139,14 +139,14 @@ TUNABLE_INT("sume.nports", &sume_nports);
 static int mod_event(module_t, int, void *);
 void sume_intr_handler(void *);
 static int sume_intr_filter(void *);
-static int
-sume_if_ioctl(struct ifnet *, unsigned long, caddr_t);
+static int sume_if_ioctl(struct ifnet *, unsigned long, caddr_t);
 static int sume_riffa_fill_sg_buf(struct sume_adapter *,
-	struct riffa_chnl_dir *, enum dma_data_direction,
-	unsigned long long);
-
+    struct riffa_chnl_dir *, enum dma_data_direction,
+    unsigned long long);
 static inline unsigned int read_reg(struct sume_adapter *, int);
 static inline void write_reg(struct sume_adapter *, int, unsigned int);
+
+//#define DEBUG // replace with sysctl variable
 
 struct {
 	uint16_t device;
@@ -158,12 +158,14 @@ struct {
 static inline unsigned int
 read_reg(struct sume_adapter *adapter, int offset)
 {
+
 	return (bus_space_read_4(adapter->bt, adapter->bh, offset << 2));
 }
 
 static inline void
 write_reg(struct sume_adapter *adapter, int offset, unsigned int val)
 {
+
 	bus_space_write_4(adapter->bt, adapter->bh, offset << 2, val);
 }
 
@@ -205,54 +207,45 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, unsigned int len)
 	uint32_t t1, t2;
 	uint16_t sport, dport, dp, plen, magic;
 	uint8_t *p8 = (uint8_t *) adapter->recv[i]->buf_addr + 3 *
-		sizeof(uint32_t);
+	    sizeof(uint32_t);
 	device_t dev = adapter->dev;
-	struct metadata mdata = { 0 };
+	struct metadata *mdata = (struct metadata *) p8;
 
 	int sume_16boff = 0;
 
 	/* The metadata header is 16 bytes. */
 	if (len < 16) {
 		device_printf(dev, "%s: short frame (%d)\n",
-			__func__, len);
+		    __func__, len);
 		return (EINVAL);
 	}
 
-	memcpy(&mdata, p8, sizeof(struct metadata));
-	sport = le16toh(mdata.sport);
-	dport = le16toh(mdata.dport);
-	plen = le16toh(mdata.plen);
-	magic = le16toh(mdata.magic);
+	sport = le16toh(mdata->sport);
+	dport = le16toh(mdata->dport);
+	plen = le16toh(mdata->plen);
+	magic = le16toh(mdata->magic);
 
-	t1 = le32toh(mdata.t1);
-	t2 = le32toh(mdata.t2);
+	t1 = le32toh(mdata->t1);
+	t2 = le32toh(mdata->t2);
 
 	if ((16 + sume_16boff * sizeof(uint16_t) + plen) > len ||
 		magic != SUME_RIFFA_MAGIC) {
 		device_printf(dev, "%s: corrupted packet (16 + %zd + %d > %d "
-			"|| magic 0x%04x != 0x%04x)\n", __func__,
-			sume_16boff * sizeof(uint16_t), plen, len, magic,
-			SUME_RIFFA_MAGIC);
+		    "|| magic 0x%04x != 0x%04x)\n", __func__,
+		    sume_16boff * sizeof(uint16_t), plen, len, magic,
+		    SUME_RIFFA_MAGIC);
 		return(ENOMEM);
 	}
 
-#ifndef	NO_SINGLE_PORT_NIC
-	/* On the single-port test NIC project s/dport are always 0. */
-	if (sport == 0 && dport == 0) {
-		np = 0;
-	} else
-#endif
-	{
-		np = 0;
-		dp = dport & 0xaa;
-		while ((dp & 0x2) == 0) {
-			np++;
-			dp >>= 2;
-		}
+	np = 0;
+	dp = dport & 0xaa;
+	while ((dp & 0x2) == 0) {
+		np++;
+		dp >>= 2;
 	}
 	if (np > sume_nports) {
 		device_printf(dev, "%s: invalid destination port 0x%04x"
-			"(%d)\n", __func__, dport, np);
+		    "(%d)\n", __func__, dport, np);
 		return (EINVAL);
 	}
 	netdev = adapter->netdev[np];
@@ -264,7 +257,9 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, unsigned int len)
 		return (ENETDOWN);
 	}
 
-	//printf("Building mbuf with length: %d\n", plen);
+#ifdef DEBUG
+	printf("Building mbuf with length: %d\n", plen);
+#endif
 	m = m_getm(NULL, plen, M_NOWAIT, MT_DATA);
 	if (m == NULL) {
 		free(m, M_SUME);
@@ -296,7 +291,7 @@ sume_start_xmit(struct ifnet *netdev, struct mbuf *m)
 	uint8_t *p8;
 	int error, i, last, offset;
 	device_t dev;
-	struct metadata mdata = { 0 };
+	struct metadata *mdata;
 	int flags = MTX_RECURSE;
 
 	sume_port = netdev->if_softc;
@@ -304,15 +299,14 @@ sume_start_xmit(struct ifnet *netdev, struct mbuf *m)
 	i = sume_port->riffa_channel;
 	dev = adapter->dev;
 
-	//mtx_lock_spin(&adapter->send[i]->lock);
 	mtx_lock_spin_flags(&adapter->lock, flags);
 
 	p8 = (uint8_t *) adapter->send[i]->buf_addr + 3 * sizeof(uint32_t);
+	mdata = (struct metadata *) p8;
 	/*
 	 * Check state. It's the best we can do for now.
 	 */
 	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
-		//mtx_unlock_spin(&adapter->send[i]->lock);
 		mtx_unlock_spin_flags(&adapter->lock, flags);
 		m_freem(m);
 		return (ENETDOWN);
@@ -322,51 +316,48 @@ sume_start_xmit(struct ifnet *netdev, struct mbuf *m)
 
 	/* Make sure we fit with the 16 bytes metadata. */
 	if ((m->m_len + 16) > adapter->sg_buf_size) {
-		//mtx_unlock_spin(&adapter->send[i]->lock);
 		mtx_unlock_spin_flags(&adapter->lock, flags);
 		device_printf(dev, "%s: Packet too big for bounce buffer "
-			"(%d)\n", __func__, m->m_len);
+		    "(%d)\n", __func__, m->m_len);
 		free(m, M_SUME);
 		return (ENOMEM);
 	}
 
-	//printf("Trying to send %d bytes to nf%d\n", m->m_len, sume_port->port);
+#ifdef DEBUG
+	printf("Trying to send %d bytes to nf%d\n", m->m_len, sume_port->port);
+#endif
 	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
-		BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 	/* Skip the first 4 * sizeof(uint32_t) bytes for the metadata. */
 	memcpy(p8 + 4 * sizeof(uint32_t), m->m_data, m->m_len);
 	adapter->send[i]->len = 4;		/* words */
-	adapter->send[i]->len += (m->m_len / 4) + 
-		((m->m_len % 4 == 0) ? 0 : 1);
-
+	adapter->send[i]->len += (m->m_len / 4) +
+	    ((m->m_len % 4 == 0) ? 0 : 1);
 
 	/* Fill in the metadata. */
-	mdata.sport = htole16(
-		1 << (sume_port->port * 2 + 1)); /* CPU(DMA) ports are odd. */
-	mdata.dport = htole16(
-		1 << (sume_port->port * 2)); /* MAC ports are even. */
-	mdata.plen = htole16(m->m_len);
-	mdata.magic = htole16(SUME_RIFFA_MAGIC);
-	mdata.t1 = htole32(0);
-	mdata.t2 = htole32(0);
-
-	memcpy(p8, &mdata, sizeof(struct metadata));
+	mdata->sport = htole16(
+	    1 << (sume_port->port * 2 + 1)); /* CPU(DMA) ports are odd. */
+	mdata->dport = htole16(
+	    1 << (sume_port->port * 2)); /* MAC ports are even. */
+	mdata->plen = htole16(m->m_len);
+	mdata->magic = htole16(SUME_RIFFA_MAGIC);
+	mdata->t1 = htole32(0);
+	mdata->t2 = htole32(0);
 
 	/* Let the FPGA know about the transfer. */
 	offset = 0;
 	last = 1;
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_OFFLAST_REG_OFF),
-		((offset << 1) | (last & 0x01)));
+	    ((offset << 1) | (last & 0x01)));
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_LEN_REG_OFF),
-		adapter->send[i]->len);		/* words */
+	    adapter->send[i]->len);		/* words */
 
 	/* Fill the S/G map. */
 	error = sume_riffa_fill_sg_buf(adapter,
-		adapter->send[i], DMA_TO_DEVICE,
-		SUME_RIFFA_LEN(adapter->send[i]->len));
+	    adapter->send[i], DMA_TO_DEVICE,
+	    SUME_RIFFA_LEN(adapter->send[i]->len));
 	if (error) {
-		//mtx_unlock_spin(&adapter->send[i]->lock);
 		mtx_unlock_spin_flags(&adapter->lock, flags);
 		device_printf(dev, "%s: failed to map S/G buffer\n", __func__);
 		m_freem(m);
@@ -377,19 +368,18 @@ sume_start_xmit(struct ifnet *netdev, struct mbuf *m)
 	adapter->send[i]->state = SUME_RIFFA_CHAN_STATE_READY;
 
 	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
-		BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	/* DMA. */
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_LO_REG_OFF),
-		(adapter->send[i]->buf_hw_addr & 0xFFFFFFFF));
+	    (adapter->send[i]->buf_hw_addr & 0xFFFFFFFF));
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_HI_REG_OFF),
-		((adapter->send[i]->buf_hw_addr >> 32) & 0xFFFFFFFF));
+	    ((adapter->send[i]->buf_hw_addr >> 32) & 0xFFFFFFFF));
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_LEN_REG_OFF),
-		4 * adapter->send[i]->num_sg);
+	    4 * adapter->send[i]->num_sg);
 
 	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
-		BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
-	//mtx_unlock_spin(&adapter->send[i]->lock);
 	mtx_unlock_spin_flags(&adapter->lock, flags);
 
 	/* We can free as long as we use the bounce buffer. */
@@ -446,9 +436,6 @@ sume_intr_handler(void *arg)
 	vect0 = adapter->vect0;
 	vect1 = adapter->vect1;
 
-	//printf("Got vect0: %d\n", vect0);
-	//printf("Got vect1: %d\n", vect1);
-
 	/*
 	 * We only have one interrupt for all channels and no way
 	 * to quickly lookup for which channel(s) we got an interrupt?
@@ -462,66 +449,64 @@ sume_intr_handler(void *arg)
 		loops = 0;
 		while ((vect & (SUME_MSI_TXBUF(i) | SUME_MSI_TXDONE(i))) &&
 			loops <= 5) {
-			if (0)
+#ifdef DEBUG
 			device_printf(dev, "%s: TX ch %d state %u vect = "
-				"0x%08x\n", __func__, i,
-				adapter->send[i]->state, vect);
+			    "0x%08x\n", __func__, i, adapter->send[i]->state,
+			    vect);
+#endif
 			switch (adapter->send[i]->state) {
 			case SUME_RIFFA_CHAN_STATE_IDLE:
 				break;
 			case SUME_RIFFA_CHAN_STATE_READY:
 				if (vect & SUME_MSI_TXBUF(i)) {
 					adapter->send[i]->state =
-						SUME_RIFFA_CHAN_STATE_READ;
+					    SUME_RIFFA_CHAN_STATE_READ;
 					vect &= ~SUME_MSI_TXBUF(i);
 				} else {
 					device_printf(dev, "%s: ch %d "
-						"unexpected interrupt in "
-						"send+3 state %u: "
-						"vect = 0x%08x\n", __func__,
-						i, adapter->send[i]->state,
-						vect);
+					    "unexpected interrupt in send+3 "
+					    "state %u: vect = 0x%08x\n",
+					    __func__, i,
+					    adapter->send[i]->state, vect);
 					adapter->send[i]->flags |=
-						SUME_CHAN_STATE_RECOVERY_FLAG;
+					    SUME_CHAN_STATE_RECOVERY_FLAG;
 				}
 				break;
 			case SUME_RIFFA_CHAN_STATE_READ:
 				if (vect & SUME_MSI_TXDONE(i)) {
 					adapter->send[i]->state =
-						SUME_RIFFA_CHAN_STATE_LEN;
+					    SUME_RIFFA_CHAN_STATE_LEN;
 
 					len = read_reg(adapter,
-						RIFFA_CHNL_REG(i,
-						RIFFA_RX_TNFR_LEN_REG_OFF));
+					    RIFFA_CHNL_REG(i,
+					    RIFFA_RX_TNFR_LEN_REG_OFF));
 					if (i == SUME_RIFFA_CHANNEL_DATA)
 						adapter->send[i]->state =
-							SUME_RIFFA_CHAN_STATE_IDLE;
+						    SUME_RIFFA_CHAN_STATE_IDLE;
 					else if (i == SUME_RIFFA_CHANNEL_REG) {
 						wakeup(&adapter->send[i]->event);
 						printf("Wake up send "
-							"thread!\n");
+						    "thread!\n");
 					} else {
 						device_printf(dev, "%s: "
-							"interrupt on ch %d "
-							"unexpected in send+4 "
-							"state %u: "
-							"vect = 0x%08x\n",
-							__func__, i,
-							adapter->send[i]->state,
-							vect);
+						    "interrupt on ch %d "
+						    "unexpected in send+4 "
+						    "state %u: vect = "
+						    "0x%08x\n", __func__, i,
+						    adapter->send[i]->state,
+						    vect);
 						adapter->send[i]->flags |=
-							SUME_CHAN_STATE_RECOVERY_FLAG;
+						    SUME_CHAN_STATE_RECOVERY_FLAG;
 					}
 					vect &= ~SUME_MSI_TXDONE(i);
 				} else {
 					device_printf(dev, "%s: ch %d "
-						"unexpected interrupt in "
-						"send+4 state %u: "
-						"vect = 0x%08x\n", __func__,
-						i, adapter->send[i]->state,
-						vect);
+					    "unexpected interrupt in send+4 "
+					    "state %u: vect = 0x%08x\n",
+					    __func__, i,
+					    adapter->send[i]->state, vect);
 					adapter->send[i]->flags |=
-						SUME_CHAN_STATE_RECOVERY_FLAG;
+					    SUME_CHAN_STATE_RECOVERY_FLAG;
 				}
 				break;
 			case SUME_RIFFA_CHAN_STATE_LEN:
@@ -533,20 +518,20 @@ sume_intr_handler(void *arg)
 		}
 
 		if ((vect & (SUME_MSI_TXBUF(i) | SUME_MSI_TXDONE(i))) &&
-			((adapter->send[i]->flags & SUME_CHAN_STATE_RECOVERY_FLAG)
-			!= 0))
+		    ((adapter->send[i]->flags & SUME_CHAN_STATE_RECOVERY_FLAG)
+		    != 0))
 			device_printf(dev, "%s: ignoring vect = 0x%08x during "
-				"TX; not in recovery; state = %d loops = %d\n",
-				__func__, vect, adapter->send[i]->state,
-				loops);
+			    "TX; not in recovery; state = %d loops = %d\n",
+			    __func__, vect, adapter->send[i]->state, loops);
 
 		loops = 0;
 		while ((vect & (SUME_MSI_RXQUE(i) | SUME_MSI_RXBUF(i) |
 			SUME_MSI_RXDONE(i))) && loops < 5) {
-			if (0)
+#ifdef DEBUG
 			device_printf(dev, "%s: RX ch %d state %u vect = "
-				"0x%08x\n", __func__, i,
-				adapter->recv[i]->state, vect);
+			    "0x%08x\n", __func__, i, adapter->recv[i]->state,
+			    vect);
+#endif
 			switch (adapter->recv[i]->state) {
 			case SUME_RIFFA_CHAN_STATE_IDLE:
 				if (vect & SUME_MSI_RXQUE(i)) {
@@ -554,41 +539,38 @@ sume_intr_handler(void *arg)
 
 					/* Clear recovery state. */
 					adapter->recv[i]->flags &=
-						~SUME_CHAN_STATE_RECOVERY_FLAG;
+					    ~SUME_CHAN_STATE_RECOVERY_FLAG;
 
 					/* Get offset and length. */
 					adapter->recv[i]->offlast = read_reg(
-						adapter, RIFFA_CHNL_REG(i,
-						RIFFA_TX_OFFLAST_REG_OFF));
+					    adapter, RIFFA_CHNL_REG(i,
+					    RIFFA_TX_OFFLAST_REG_OFF));
 					adapter->recv[i]->len =
-						read_reg(adapter, RIFFA_CHNL_REG(i,
-						RIFFA_TX_LEN_REG_OFF));
+					    read_reg(adapter, RIFFA_CHNL_REG(i,
+					    RIFFA_TX_LEN_REG_OFF));
 
 					/* Boundary checks. */
 					max_ptr = (unsigned long) ((char *)
-						adapter->recv[i]->buf_addr
-						+ SUME_RIFFA_OFFSET(
-						adapter->recv[i]->offlast) +
-						SUME_RIFFA_LEN(
-						adapter->recv[i]->len) - 1);
+					    adapter->recv[i]->buf_addr
+					    + SUME_RIFFA_OFFSET(
+					    adapter->recv[i]->offlast) +
+					    SUME_RIFFA_LEN(
+					    adapter->recv[i]->len) - 1);
 					if (max_ptr < (unsigned long)
-						adapter->recv[i]->buf_addr) {
+					    adapter->recv[i]->buf_addr) {
 						device_printf(dev, "%s: "
-							"receive buffer "
-							"wrap-around "
-							"overflow.\n",
-							__func__);
+						    "receive buffer "
+						    "wrap-around overflow.\n",
+						    __func__);
 					}
 					if ((SUME_RIFFA_OFFSET(
-						adapter->recv[i]->offlast) +
-						SUME_RIFFA_LEN(
-						adapter->recv[i]->len)) >
-						adapter->recv[i]->bouncebuf_len) {
-							device_printf(dev, "%s: "
-								"receive "
-								"buffer too "
-								"small.\n",
-								__func__);
+					    adapter->recv[i]->offlast) +
+					    SUME_RIFFA_LEN(
+					    adapter->recv[i]->len)) >
+					    adapter->recv[i]->bouncebuf_len) {
+						device_printf(dev, "%s: "
+						    "receive buffer too "
+						    "small.\n", __func__);
 					}
 
 					/* Build and load S/G map. */
@@ -599,65 +581,67 @@ sume_intr_handler(void *arg)
 						adapter->recv[i]->len));
 					if (error != 0) {
 						device_printf(dev, "%s: "
-							"Failed to build S/G "
-							"map.\n", __func__);
+						    "Failed to build S/G "
+						    "map.\n", __func__);
 					}
-					bus_dmamap_sync(adapter->recv[i]->my_tag,
-						adapter->recv[i]->my_map,
-						BUS_DMASYNC_PREREAD |
-						BUS_DMASYNC_PREWRITE);
+					bus_dmamap_sync(
+					    adapter->recv[i]->my_tag,
+					    adapter->recv[i]->my_map,
+					    BUS_DMASYNC_PREREAD |
+					    BUS_DMASYNC_PREWRITE);
 					write_reg(adapter,
-						RIFFA_CHNL_REG(i,
-						RIFFA_TX_SG_ADDR_LO_REG_OFF),
-						(adapter->recv[i]->buf_hw_addr
-						& 0xFFFFFFFF));
+					    RIFFA_CHNL_REG(i,
+					    RIFFA_TX_SG_ADDR_LO_REG_OFF),
+					    (adapter->recv[i]->buf_hw_addr
+					    & 0xFFFFFFFF));
 					write_reg(adapter,
-						RIFFA_CHNL_REG(i,
-						RIFFA_TX_SG_ADDR_HI_REG_OFF),
-						((adapter->recv[i]->buf_hw_addr
-						>> 32) & 0xFFFFFFFF));
+					    RIFFA_CHNL_REG(i,
+					    RIFFA_TX_SG_ADDR_HI_REG_OFF),
+					    ((adapter->recv[i]->buf_hw_addr
+					    >> 32) & 0xFFFFFFFF));
 					write_reg(adapter,
-						RIFFA_CHNL_REG(i,
-						RIFFA_TX_SG_LEN_REG_OFF),
-						4 * adapter->recv[i]->num_sg);
-					bus_dmamap_sync(adapter->recv[i]->my_tag,
-						adapter->recv[i]->my_map,
-						BUS_DMASYNC_POSTREAD |
-						BUS_DMASYNC_POSTWRITE);
+					    RIFFA_CHNL_REG(i,
+					    RIFFA_TX_SG_LEN_REG_OFF),
+					    4 * adapter->recv[i]->num_sg);
+					bus_dmamap_sync(
+					    adapter->recv[i]->my_tag,
+					    adapter->recv[i]->my_map,
+					    BUS_DMASYNC_POSTREAD |
+					    BUS_DMASYNC_POSTWRITE);
 
 					adapter->recv[i]->state =
-						SUME_RIFFA_CHAN_STATE_READY;
+					    SUME_RIFFA_CHAN_STATE_READY;
 					vect &= ~SUME_MSI_RXQUE(i);
 				} else {
 					device_printf(dev, "%s: ch %d "
-						"unexpected interrupt in "
-						"recv+0 state %u: vect = "
-						"0x%08x\n", __func__, i,
-						adapter->recv[i]->state, vect);
+					    "unexpected interrupt in recv+0 "
+					    "state %u: vect = 0x%08x\n",
+					    __func__, i,
+					    adapter->recv[i]->state, vect);
 					adapter->recv[i]->flags |=
-						SUME_CHAN_STATE_RECOVERY_FLAG;
+					    SUME_CHAN_STATE_RECOVERY_FLAG;
 				}
 				break;
 			case SUME_RIFFA_CHAN_STATE_READY:
 				if (vect & SUME_MSI_RXBUF(i)) {
 					adapter->recv[i]->state =
-						SUME_RIFFA_CHAN_STATE_READ;
+					    SUME_RIFFA_CHAN_STATE_READ;
 					vect &= ~SUME_MSI_RXBUF(i);
 				} else {
 					device_printf(dev, "%s: ch %d "
-						"unexpected interrupt in "
-						"recv+1 state %u: vect = "
-						"0x%08x\n", __func__, i,
-						adapter->recv[i]->state, vect);
+					    "unexpected interrupt in recv+1 "
+					    "state %u: vect = 0x%08x\n",
+					    __func__, i,
+					    adapter->recv[i]->state, vect);
 					adapter->recv[i]->flags |=
-						SUME_CHAN_STATE_RECOVERY_FLAG;
+					    SUME_CHAN_STATE_RECOVERY_FLAG;
 				}
 				break;
 			case SUME_RIFFA_CHAN_STATE_READ:
 				if (vect & SUME_MSI_RXDONE(i)) {
 					len = read_reg(adapter,
-						RIFFA_CHNL_REG(i,
-						RIFFA_TX_TNFR_LEN_REG_OFF));
+					    RIFFA_CHNL_REG(i,
+					    RIFFA_TX_TNFR_LEN_REG_OFF));
 
 					/*
 					 * Remember, len and recv[i]->len
@@ -665,35 +649,35 @@ sume_intr_handler(void *arg)
 					 */
 					if (i == SUME_RIFFA_CHANNEL_DATA) {
 						error = sume_rx_build_mbuf(
-							adapter, i, len << 2);
+						    adapter, i, len << 2);
 						adapter->recv[i]->state =
-							SUME_RIFFA_CHAN_STATE_IDLE;
-					} else if (i == SUME_RIFFA_CHANNEL_REG) {
+						    SUME_RIFFA_CHAN_STATE_IDLE;
+					} else if (i ==
+					    SUME_RIFFA_CHANNEL_REG) {
 						wakeup(&adapter->recv[i]->event);
 						printf("Wake up recv "
-							"thread!\n");
+						    "thread!\n");
 					} else {
 						device_printf(dev, "%s: "
-							"interrupt on ch %d "
-							"unexpected in recv+2 "
-							"state %u: vect = "
-							"0x%08x\n", __func__,
-							i,
-							adapter->recv[i]->state,
-							vect);
+						    "interrupt on ch %d "
+						    "unexpected in recv+2 "
+						    "state %u: vect = "
+						    "0x%08x\n", __func__, i,
+						    adapter->recv[i]->state,
+						    vect);
 						adapter->recv[i]->flags |=
-							SUME_CHAN_STATE_RECOVERY_FLAG;
+						    SUME_CHAN_STATE_RECOVERY_FLAG;
 					}
 					vect &= ~SUME_MSI_RXDONE(i);
 
 				} else {
 					device_printf(dev, "%s: ch %d "
-						"unexpected interrupt in "
-						"recv+2 state %u: vect = "
-						"0x%08x\n", __func__, i,
-						adapter->recv[i]->state, vect);
+					    "unexpected interrupt in recv+2 "
+					    "state %u: vect = 0x%08x\n",
+					    __func__, i,
+					    adapter->recv[i]->state, vect);
 					adapter->recv[i]->flags |=
-						SUME_CHAN_STATE_RECOVERY_FLAG;
+					    SUME_CHAN_STATE_RECOVERY_FLAG;
 				}
 				break;
 			case SUME_RIFFA_CHAN_STATE_LEN:
@@ -705,14 +689,12 @@ sume_intr_handler(void *arg)
 		}
 
 		if ((vect & (SUME_MSI_RXQUE(i) | SUME_MSI_RXBUF(i) |
-			SUME_MSI_RXDONE(i))) &&
-			((adapter->recv[i]->flags &
-			  SUME_CHAN_STATE_RECOVERY_FLAG)
-			!= 0))
+		    SUME_MSI_RXDONE(i))) && ((adapter->recv[i]->flags &
+		    SUME_CHAN_STATE_RECOVERY_FLAG) != 0))
 			device_printf(dev, "%s: ignoring vect = 0x%08x "
-				"during RX; not in recovery; state = %d, "
-				"loops = %d\n", __func__, vect,
-				adapter->recv[i]->state, loops);
+			    "during RX; not in recovery; state = %d, loops = "
+			    "%d\n", __func__, vect, adapter->recv[i]->state,
+			    loops);
 	}
 	mtx_unlock_spin_flags(&adapter->lock, flags);
 }
@@ -767,10 +749,10 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 
 	adapter->rid = PCIR_BAR(0);
 	adapter->bar0_addr = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
-		&adapter->rid, RF_ACTIVE);
+	    &adapter->rid, RF_ACTIVE);
 	if (adapter->bar0_addr == NULL) {
 		device_printf(dev, "Unable to allocate bus resource: "
-			"bar0_addr\n");
+		    "bar0_addr\n");
 		return (ENXIO);
 	}
 	adapter->bt = rman_get_bustag(adapter->bar0_addr);
@@ -778,7 +760,7 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 	adapter->bar0_len = rman_get_size(adapter->bar0_addr);
 	if (adapter->bar0_len != 1024) {
 		device_printf(dev, "%s: bar0_len %lu != 1024\n", __func__,
-				adapter->bar0_len);
+		    adapter->bar0_len);
 		return (ENXIO);
 	}
 
@@ -786,47 +768,47 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 	error = pci_alloc_msi(dev, &count);
 	if (error) {
 		device_printf(dev, "Unable to allocate bus resource: PCI "
-			"MSI\n");
+		    "MSI\n");
 		return (error);
 	}
 
-	adapter->irq.rid = 1; // should be 1, thus says pci_alloc_msi()
+	adapter->irq.rid = 1; /* Should be 1, thus says pci_alloc_msi() */
 	adapter->irq.res = bus_alloc_resource_any(dev, SYS_RES_IRQ,
-		&adapter->irq.rid, RF_SHAREABLE | RF_ACTIVE);
+	    &adapter->irq.rid, RF_SHAREABLE | RF_ACTIVE);
 	if (adapter->irq.res == NULL) {
 		device_printf(dev, "Unable to allocate bus resource: IRQ "
-			"memory\n");
+		    "memory\n");
 		return (ENXIO);
 	}
 
 	error = bus_setup_intr(dev, adapter->irq.res, INTR_MPSAFE |
-		INTR_TYPE_NET, sume_intr_filter, sume_intr_handler, adapter,
-		&adapter->irq.tag);
+	    INTR_TYPE_NET, sume_intr_filter, sume_intr_handler, adapter,
+	    &adapter->irq.tag);
 	if (error) {
 		device_printf(dev, "failed to setup interrupt for rid %d, name"
-			" %s: %d\n", adapter->irq.rid, "SUME_INTR", error);
+		    " %s: %d\n", adapter->irq.rid, "SUME_INTR", error);
 		return (ENXIO);
 	} else
 		bus_describe_intr(dev, adapter->irq.res, adapter->irq.tag,
-			"%s", "SUME_INTR");
+		    "%s", "SUME_INTR");
 
 	if (pci_find_cap(dev, PCIY_EXPRESS, &capmem) != 0) {
 		device_printf(dev, "%s: pcie_capability_read_dword "
-			"PCI_EXP_DEVCTL error\n", __func__);
+		    "PCI_EXP_DEVCTL error\n", __func__);
 		return (ENXIO);
 	}
 
 	devctl = pci_read_config(dev, capmem + PCIER_DEVICE_CTL, 2);
 	pci_write_config(dev, capmem + PCIER_DEVICE_CTL, (devctl |
-		PCIEM_CTL_EXT_TAG_FIELD), 2);
+	    PCIEM_CTL_EXT_TAG_FIELD), 2);
 
 	devctl = pci_read_config(dev, capmem + PCIER_DEVICE_CTL2, 2);
 	pci_write_config(dev, capmem + PCIER_DEVICE_CTL2, (devctl |
-		PCIEM_CTL2_ID_ORDERED_REQ_EN), 2);
+	    PCIEM_CTL2_ID_ORDERED_REQ_EN), 2);
 
 	linkctl = pci_read_config(dev, capmem + PCIER_LINK_CTL, 2);
 	pci_write_config(dev, capmem + PCIER_LINK_CTL, (linkctl |
-		PCIEM_LINK_CTL_RCB), 2);
+	    PCIEM_LINK_CTL_RCB), 2);
 
 	reg = read_reg(adapter, RIFFA_INFO_REG_OFF);
 	adapter->num_chnls =	SUME_RIFFA_CHANNELS;
@@ -837,43 +819,43 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 	/* Check bus master is enabled. */
 	if (((reg >> 4) & 0x1) != 1) {
 		device_printf(dev, "%s: bus master not enabled: %d\n",
-			__func__, ((reg >> 4) & 0x1));
+		    __func__, ((reg >> 4) & 0x1));
 		return (error);
 	}
 	/* Check link parameters are valid. */
 	if (((reg >> 5) & 0x3f) == 0 || ((reg >> 11) & 0x3) == 0) {
 		device_printf(dev, "%s: link parameters not valid: %d %d\n",
-			__func__, ((reg >> 5) & 0x3f), ((reg >> 11) & 0x3));
+		    __func__, ((reg >> 5) & 0x3f), ((reg >> 11) & 0x3));
 		return (error);
 	}
 	/* Check # of channels are within valid range. */
 	if ((reg & 0xf) == 0 || (reg & 0xf) > RIFFA_MAX_CHNLS) {
 		device_printf(dev, "%s: number of channels out of range: %d\n",
-			__func__, (reg & 0xf));
+		    __func__, (reg & 0xf));
 		return (error);
 	}
 	/* Check bus width. */
 	if (((reg >> 19) & 0xf) == 0 ||
-		((reg >> 19) & 0xf) > RIFFA_MAX_BUS_WIDTH_PARAM) {
+	    ((reg >> 19) & 0xf) > RIFFA_MAX_BUS_WIDTH_PARAM) {
 		device_printf(dev, "%s: bus width out f range: %d\n",
-			__func__, ((reg >> 19) & 0xf));
+		    __func__, ((reg >> 19) & 0xf));
 		return (error);
 	}
 
 	device_printf(dev, "[riffa] # of channels: %d\n",
-		(reg & 0xf));
+	    (reg & 0xf));
 	device_printf(dev, "[riffa] bus interface width: %d\n",
-		(((reg >> 19) & 0xf) << 5));
+	    (((reg >> 19) & 0xf) << 5));
 	device_printf(dev, "[riffa] bus master enabled: %d\n",
-		((reg >> 4) & 0x1));
+	    ((reg >> 4) & 0x1));
 	device_printf(dev, "[riffa] negotiated link width: %d\n",
-		((reg >> 5) & 0x3f));
+	    ((reg >> 5) & 0x3f));
 	device_printf(dev, "[riffa] negotiated rate width: %d MTs\n",
-		((reg >> 11) & 0x3) * 2500);
+	    ((reg >> 11) & 0x3) * 2500);
 	device_printf(dev, "[riffa] max downstream payload: %d B\n",
-		(128 << ((reg >> 13) & 0x7)));
+	    (128 << ((reg >> 13) & 0x7)));
 	device_printf(dev, "[riffa] max upstream payload: %d B\n",
-		(128 << ((reg >> 16) & 0x7)));
+	    (128 << ((reg >> 16) & 0x7)));
 
 	return (0);
 
@@ -911,9 +893,8 @@ sume_if_up(void *arg)
 
 /* Helper functions. */
 static int
-sume_riffa_fill_sg_buf(struct sume_adapter *adapter,
-	struct riffa_chnl_dir *p, enum dma_data_direction dir,
-	unsigned long long len)
+sume_riffa_fill_sg_buf(struct sume_adapter *adapter, struct riffa_chnl_dir *p,
+    enum dma_data_direction dir, unsigned long long len)
 {
 	uint32_t *sgtablep;
 
@@ -921,7 +902,7 @@ sume_riffa_fill_sg_buf(struct sume_adapter *adapter,
 
 	sgtablep[0] = (p->buf_hw_addr + 3 * sizeof(uint32_t)) & 0xffffffff;
 	sgtablep[1] = ((p->buf_hw_addr + 3 * sizeof(uint32_t)) >> 32) &
-		0xffffffff;
+	    0xffffffff;
 	sgtablep[2] = len;
 
 	p->num_sg = 1;
@@ -940,14 +921,13 @@ sume_reg_wr_locked(struct sume_adapter *adapter, int i)
 	offset = 0;
 	last = 1;
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_OFFLAST_REG_OFF),
-		((offset << 1) | (last & 0x01)));
+	    ((offset << 1) | (last & 0x01)));
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_LEN_REG_OFF),
-		adapter->send[i]->len);	/* words */
+	    adapter->send[i]->len);	/* words */
 
 	/* Fill the S/G map. */
-	error = sume_riffa_fill_sg_buf(adapter,
-		adapter->send[i], DMA_TO_DEVICE,
-		SUME_RIFFA_LEN(adapter->send[i]->len));
+	error = sume_riffa_fill_sg_buf(adapter, adapter->send[i],
+	    DMA_TO_DEVICE, SUME_RIFFA_LEN(adapter->send[i]->len));
 	if (error != 0) {
 		device_printf(dev, "%s: failed to map S/G buffer\n", __func__);
 		return (EFAULT);
@@ -957,16 +937,16 @@ sume_reg_wr_locked(struct sume_adapter *adapter, int i)
 	adapter->send[i]->state = SUME_RIFFA_CHAN_STATE_READY;
 
 	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
-		BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	/* DMA. */
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_LO_REG_OFF),
-		(adapter->send[i]->buf_hw_addr & 0xFFFFFFFF));
+	    (adapter->send[i]->buf_hw_addr & 0xFFFFFFFF));
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_HI_REG_OFF),
-		((adapter->send[i]->buf_hw_addr >> 32) & 0xFFFFFFFF));
+	    ((adapter->send[i]->buf_hw_addr >> 32) & 0xFFFFFFFF));
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_LEN_REG_OFF),
-		4 * adapter->send[i]->num_sg);
+	    4 * adapter->send[i]->num_sg);
 	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
-		BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
 	return (0);
 }
@@ -979,7 +959,7 @@ sume_reg_wr_locked(struct sume_adapter *adapter, int i)
  */
 static int
 sume_initiate_reg_write(struct sume_port *sume_port, struct sume_ifreq *sifr,
-	uint32_t strb)
+    uint32_t strb)
 {
 	struct sume_adapter *adapter;
 	uint32_t *p32;
@@ -1007,7 +987,7 @@ sume_initiate_reg_write(struct sume_port *sume_port, struct sume_ifreq *sifr,
 	*p32++ = htole32(sifr->val);
 	/* Tag to indentify request. */
 	*p32++ = htole32(++adapter->send[i]->rtag);
-	*p32 = htole32(strb);		/* This is STRB; write a val. */
+	*p32 = htole32(strb);           /* This is STRB; write a val. */
 	adapter->send[i]->len = 4;	/* words */
 
 	error = sume_reg_wr_locked(adapter, i);
@@ -1018,12 +998,11 @@ sume_initiate_reg_write(struct sume_port *sume_port, struct sume_ifreq *sifr,
 
 	/* Timeout after 1s. */
 	error = msleep_spin(&adapter->send[i]->event,
-		&adapter->send[i]->send_sleep, "Waiting recv to finish", 1 *
-		hz);
+	    &adapter->send[i]->send_sleep, "Waiting recv to finish", 1 * hz);
 
 	if (error == EWOULDBLOCK) {
 		device_printf(adapter->dev, "%s: wait error: %d\n", __func__,
-			error);
+		    error);
 		mtx_unlock_spin(&adapter->send[i]->send_sleep);
 		return (EWOULDBLOCK);
 	}
@@ -1074,10 +1053,10 @@ sume_read_reg_result(struct sume_port *sume_port, struct sume_ifreq *sifr)
 	/* Timeout after 1s. */
 	mtx_lock_spin(&adapter->recv[i]->recv_sleep);
 	bus_dmamap_sync(adapter->recv[i]->my_tag, adapter->recv[i]->my_map,
-		BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	error = msleep_spin(&adapter->recv[i]->event,
-		&adapter->recv[i]->recv_sleep, "Waiting transaction to finish",
-		1 * hz);
+	    &adapter->recv[i]->recv_sleep, "Waiting transaction to finish",
+	    1 * hz);
 
 	if (error == EWOULDBLOCK) {
 		device_printf(dev, "%s: wait error: %d\n", __func__, error);
@@ -1085,7 +1064,7 @@ sume_read_reg_result(struct sume_port *sume_port, struct sume_ifreq *sifr)
 		return (EWOULDBLOCK);
 	}
 	bus_dmamap_sync(adapter->recv[i]->my_tag, adapter->recv[i]->my_map,
-		BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
 	/*
 	 * Read reply data and validate address and tag.
@@ -1095,16 +1074,14 @@ sume_read_reg_result(struct sume_port *sume_port, struct sume_ifreq *sifr)
 	p32 = (uint32_t *) adapter->recv[i]->buf_addr + 3;
 	if (le32toh(*(p32 + 2)) != adapter->send[i]->rtag) {
 		device_printf(dev, "%s: rtag error: 0x%08x 0x%08x\n", __func__,
-			le32toh(*(p32 + 2)), adapter->send[i]->rtag);
+		    le32toh(*(p32 + 2)), adapter->send[i]->rtag);
 	}
 	sifr->val = le32toh(*(p32 + 1));
 	adapter->recv[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
 	mtx_unlock_spin(&adapter->recv[i]->recv_sleep);
 
 	/* We are done. */
-	mtx_lock_spin(&adapter->recv[i]->lock);
 	adapter->send[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
-	mtx_unlock_spin(&adapter->recv[i]->lock);
 
 	return (0);
 }
@@ -1213,7 +1190,7 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 	struct ifmedia *ifm = &sume_port->media;
 
 	if (ifm->ifm_cur->ifm_media == (IFM_ETHER | IFM_10G_SR) &&
-		sume_port->port_up)
+	    sume_port->port_up)
 		ifmr->ifm_active = IFM_ETHER | IFM_10G_SR;
 	else
 		ifmr->ifm_active = ifm->ifm_cur->ifm_media;
@@ -1226,6 +1203,7 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 static void
 sume_qflush(struct ifnet *netdev)
 {
+
 	// dummy qflush
 }
 
@@ -1264,7 +1242,7 @@ sume_netdev_alloc(struct sume_adapter *adapter, unsigned int port)
 	ether_ifattach(ifp, hw_addr);
 
 	ifmedia_init(&sume_port->media, IFM_IMASK, sume_media_change,
-		sume_media_status);
+	    sume_media_status);
 	ifmedia_add(&sume_port->media, IFM_ETHER | IFM_10G_SR, 0, NULL);
 	ifmedia_set(&sume_port->media, IFM_ETHER | IFM_10G_SR);
 
@@ -1285,8 +1263,8 @@ callback_dma(void *arg, bus_dma_segment_t *segs, int nseg, int err)
 }
 
 static int
-sume_probe_riffa_buffer(const struct sume_adapter *adapter, 
-	struct riffa_chnl_dir ***p, const char *dir)
+sume_probe_riffa_buffer(const struct sume_adapter *adapter,
+    struct riffa_chnl_dir ***p, const char *dir)
 {
 	struct riffa_chnl_dir **rp;
 	bus_addr_t hw_addr;
@@ -1295,7 +1273,7 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 
 	error = ENOMEM;
 	*p = (struct riffa_chnl_dir **) malloc(adapter->num_chnls *
-		sizeof(struct riffa_chnl_dir *), M_SUME, M_ZERO | M_WAITOK);
+	    sizeof(struct riffa_chnl_dir *), M_SUME, M_ZERO | M_WAITOK);
 	if (*p == NULL) {
 		device_printf(dev, "%s: malloc(%s) failed.\n", __func__, dir);
 		return (error);
@@ -1306,50 +1284,50 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 	for (i = 0; i < adapter->num_chnls; i++) {
 		/* One direction. */
 		rp[i] = (struct riffa_chnl_dir *)
-			malloc(sizeof(struct riffa_chnl_dir), M_SUME, M_ZERO |
-			M_WAITOK);
+		    malloc(sizeof(struct riffa_chnl_dir), M_SUME,
+		    M_ZERO | M_WAITOK);
 		if (rp[i] == NULL) {
 			device_printf(dev, "%s: malloc(%s[%d]) riffa_chnl_dir "
-				"failed.\n", __func__, dir, i);
+			    "failed.\n", __func__, dir, i);
 			return (error);
 		}
 
 		int err = bus_dma_tag_create(bus_get_dma_tag(dev),
-			4, 0,
-			BUS_SPACE_MAXADDR,
-			BUS_SPACE_MAXADDR,
-			NULL, NULL,
-			adapter->sg_buf_size, // CHECK
-			1,
-			adapter->sg_buf_size, // CHECK
-			0,
-			NULL,
-			NULL,
-			&rp[i]->my_tag);
+		    4, 0,
+		    BUS_SPACE_MAXADDR,
+		    BUS_SPACE_MAXADDR,
+		    NULL, NULL,
+		    adapter->sg_buf_size, // CHECK
+		    1,
+		    adapter->sg_buf_size, // CHECK
+		    0,
+		    NULL,
+		    NULL,
+		    &rp[i]->my_tag);
 
 		if (err) {
 			device_printf(dev, "%s: bus_dma_tag_create(%s[%d]) "
-				"failed.\n", __func__, dir, i);
+			    "failed.\n", __func__, dir, i);
 			return (err);
 		}
 
 		err = bus_dmamem_alloc(rp[i]->my_tag, (void **)
-			&rp[i]->buf_addr, BUS_DMA_WAITOK | BUS_DMA_COHERENT |
-			BUS_DMA_ZERO, &rp[i]->my_map);
+		    &rp[i]->buf_addr, BUS_DMA_WAITOK | BUS_DMA_COHERENT |
+		    BUS_DMA_ZERO, &rp[i]->my_map);
 		if (err) {
 			device_printf(dev, "%s: bus_dmamem_alloc(%s[%d]) "
-				"rp[i]->buf_addr failed.\n", __func__, dir, i);
+			    "rp[i]->buf_addr failed.\n", __func__, dir, i);
 			return (err);
 		}
 
 		bzero(rp[i]->buf_addr, adapter->sg_buf_size);
 
 		err = bus_dmamap_load(rp[i]->my_tag, rp[i]->my_map,
-			rp[i]->buf_addr, adapter->sg_buf_size, callback_dma,
-			&hw_addr, BUS_DMA_NOWAIT);
+		    rp[i]->buf_addr, adapter->sg_buf_size, callback_dma,
+		    &hw_addr, BUS_DMA_NOWAIT);
 		if (err) {
 			device_printf(dev, "%s: bus_dmamap_load(%s[%d]) "
-				"hw_addr failed.\n", __func__, dir, i);
+			    "hw_addr failed.\n", __func__, dir, i);
 			return (err);
 		}
 		rp[i]->buf_hw_addr = hw_addr;
@@ -1366,7 +1344,6 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 		/* Initialize state. */
 		mtx_init(&rp[i]->send_sleep, "Send sleep", NULL, MTX_SPIN);
 		mtx_init(&rp[i]->recv_sleep, "Recv sleep", NULL, MTX_SPIN);
-		mtx_init(&rp[i]->lock, "Channel lock", NULL, MTX_SPIN);
 
 		rp[i]->rtag = -3;
 		rp[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
@@ -1399,7 +1376,7 @@ sume_attach(device_t dev)
 	/* Start with the safety check to avoid malfunctions further down. */
 	if (sume_nports < 1 || sume_nports > SUME_PORTS_MAX) {
 		device_printf(dev, "%s: sume_nports out of range: %d (1..%d). "
-			"Using max.\n", __func__, sume_nports, SUME_PORTS_MAX);
+		    "Using max.\n", __func__, sume_nports, SUME_PORTS_MAX);
 		sume_nports = SUME_PORTS_MAX;
 	}
 
@@ -1454,7 +1431,7 @@ sume_remove_riffa_buffer(const struct sume_adapter *adapter,
 
 		if (pp[i]->buf_hw_addr != 0) {
 			bus_dmamem_free(pp[i]->my_tag, pp[i]->buf_addr,
-				pp[i]->my_map);
+			    pp[i]->my_map);
 			pp[i]->buf_hw_addr = 0;
 		}
 
@@ -1502,7 +1479,7 @@ sume_detach(device_t dev)
 		bus_teardown_intr(dev, adapter->irq.res, adapter->irq.tag);
 	if (adapter->irq.res)
 		bus_release_resource(dev, SYS_RES_IRQ, adapter->irq.rid,
-			adapter->irq.res);
+		    adapter->irq.res);
 
 	device_delete_children(dev);
 
@@ -1510,7 +1487,7 @@ sume_detach(device_t dev)
 
 	if (adapter->bar0_addr)
 		bus_release_resource(dev, SYS_RES_MEMORY, adapter->rid,
-			adapter->bar0_addr);
+		    adapter->bar0_addr);
 
 	return (0);
 }

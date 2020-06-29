@@ -1,4 +1,5 @@
 /*-
+ * Copyright (c) 2015 Bjoern A. Zeeb
  * Copyright (c) 2020 Denis Salopek
  * All rights reserved
  *
@@ -31,13 +32,13 @@
 #define SUME_PORTS_MAX			4
 #endif
 
-#define SUME_IOCTL_CMD_WRITE_REG        (SIOCGPRIVATE_0)
-#define SUME_IOCTL_CMD_READ_REG         (SIOCGPRIVATE_1)
+#define SUME_IOCTL_CMD_WRITE_REG	(SIOCGPRIVATE_0)
+#define SUME_IOCTL_CMD_READ_REG		(SIOCGPRIVATE_1)
 
 #define SUME_LOCK(adapter, flags)	\
-	spin_lock_irqsave(&adapter->lock, flags);
+    spin_lock_irqsave(&adapter->lock, flags);
 #define SUME_UNLOCK(adapter, flags)	\
-	spin_unlock_irqrestore(&adapter->lock, flags);
+    spin_unlock_irqrestore(&adapter->lock, flags);
 
 #define SUME_LOCK_RX(adapter, i, flags)
 #define SUME_UNLOCK_RX(adapter, i, flags)
@@ -46,7 +47,7 @@
 
 /* Currently SUME only uses two fixed channels for all port traffic and regs. */
 #define SUME_RIFFA_CHANNEL_DATA		0
-#define SUME_RIFFA_CHANNEL_REG		1       /* See description at top. */
+#define SUME_RIFFA_CHANNEL_REG		1	/* See description at top. */
 #define SUME_RIFFA_CHANNELS		2
 
 /* RIFFA constants. */
@@ -99,11 +100,11 @@
     ((sg_dma_address(sg) >> 32) & 0xffffffff);
 #define	SUME_RIFFA_SG_LEN(sg)		(sg_dma_len(sg) >> 2)	/* Words. */
 
-#define SUME_MSI_RXQUE(i)	(1 << ((5 * i) + 0))
-#define SUME_MSI_RXBUF(i)	(1 << ((5 * i) + 1))
-#define SUME_MSI_RXDONE(i)	(1 << ((5 * i) + 2))
-#define SUME_MSI_TXBUF(i)	(1 << ((5 * i) + 3))
-#define SUME_MSI_TXDONE(i)	(1 << ((5 * i) + 4))
+#define SUME_MSI_RXQUE(i)		(1 << ((5 * i) + 0))
+#define SUME_MSI_RXBUF(i)		(1 << ((5 * i) + 1))
+#define SUME_MSI_RXDONE(i)		(1 << ((5 * i) + 2))
+#define SUME_MSI_TXBUF(i)		(1 << ((5 * i) + 3))
+#define SUME_MSI_TXDONE(i)		(1 << ((5 * i) + 4))
 
 /* find where this is defined */
 enum dma_data_direction {
@@ -114,39 +115,34 @@ enum dma_data_direction {
 };
 
 struct irq {
-	struct resource *res;
-	int rid;
-	void *tag;
+	struct resource		*res;
+	int			rid;
+	void			*tag;
 } __aligned(CACHE_LINE_SIZE);
 
 struct riffa_chnl_dir {
-	void				*buf_addr;	/* S/G addresses+len. */
-	bus_addr_t			buf_hw_addr;	/* -- " -- mapped. */
-	int				num_sg;
-//#ifndef SUME_GLOBAL_LOCK
-	//spinlock_t			lock;
-//#endif
-	//wait_queue_head_t		waitq;
-	unsigned int			state;
-	unsigned int			flags;
-	unsigned int			offlast;
-	unsigned int			len;		/* words */
-	unsigned int			rtag;
-	uint32_t			*bouncebuf;
-	size_t				bouncebuf_len;
+	void			*buf_addr;	/* S/G addresses+len. */
+	bus_addr_t		buf_hw_addr;	/* -- " -- mapped. */
+	int			num_sg;
+	unsigned int		state;
+	unsigned int		flags;
+	unsigned int		offlast;
+	unsigned int		len;		/* words */
+	unsigned int		rtag;
+	uint32_t		*bouncebuf;
+	size_t			bouncebuf_len;
 
-	bus_dma_tag_t			my_tag;
-	bus_dmamap_t			my_map;
+	bus_dma_tag_t		my_tag;
+	bus_dmamap_t		my_map;
 
-	struct mtx			send_sleep;
-	struct mtx			recv_sleep;
-	struct mtx			lock;
-	int				event;
+	struct mtx		send_sleep;
+	struct mtx		recv_sleep;
+	int			event;
 };
 
 struct sume_ifreq {
-	uint32_t        addr;
-	uint32_t        val;
+	uint32_t		addr;
+	uint32_t		val;
 };
 
 struct sume_port {
@@ -174,8 +170,6 @@ struct sume_adapter {
 	struct ifnet		*netdev[4];
 	struct sume_port	port[4];
 	struct mtx		lock;
-	struct mtx		rcv_wait;
-	struct mtx		wr_wait;
 
 	struct riffa_chnl_dir	**recv;
 	struct riffa_chnl_dir	**send;
