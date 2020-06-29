@@ -961,7 +961,7 @@ sume_initiate_reg_write(struct sume_port *sume_port, struct sume_ifreq *sifr,
     uint32_t strb)
 {
 	struct sume_adapter *adapter;
-	uint32_t *p32;
+	struct regop_data *data;
 	int error = 0, i;
 
 	adapter = sume_port->adapter;
@@ -981,12 +981,13 @@ sume_initiate_reg_write(struct sume_port *sume_port, struct sume_ifreq *sifr,
 		return (EBUSY);
 	}
 
-	p32 = (uint32_t *) adapter->send[i]->buf_addr + 3;
-	*p32++ = htole32(sifr->addr);
-	*p32++ = htole32(sifr->val);
+	data = (struct regop_data *) (adapter->send[i]->buf_addr + 3 *
+	    sizeof(uint32_t));
+	data->addr = htole32(sifr->addr);
+	data->val = htole32(sifr->val);
 	/* Tag to indentify request. */
-	*p32++ = htole32(++adapter->send[i]->rtag);
-	*p32 = htole32(strb);           /* This is STRB; write a val. */
+	data->rtag = htole32(++adapter->send[i]->rtag);
+	data->strb = htole32(strb);
 	adapter->send[i]->len = 4;	/* Words */
 
 	error = sume_reg_wr_locked(adapter, i);
@@ -1033,7 +1034,7 @@ static int
 sume_read_reg_result(struct sume_port *sume_port, struct sume_ifreq *sifr)
 {
 	struct sume_adapter *adapter;
-	uint32_t *p32;
+	struct regop_data *data;
 	int error, i;
 	device_t dev;
 
@@ -1070,12 +1071,13 @@ sume_read_reg_result(struct sume_port *sume_port, struct sume_ifreq *sifr)
 	 * Note: we do access the send side without lock but the state
 	 * machine does prevent the data from changing.
 	 */
-	p32 = (uint32_t *) adapter->recv[i]->buf_addr + 3;
-	if (le32toh(*(p32 + 2)) != adapter->send[i]->rtag) {
+	data = (struct regop_data *) (adapter->recv[i]->buf_addr + 3 *
+	    sizeof(uint32_t));
+	if (le32toh(data->rtag) != adapter->send[i]->rtag) {
 		device_printf(dev, "%s: rtag error: 0x%08x 0x%08x\n", __func__,
-		    le32toh(*(p32 + 2)), adapter->send[i]->rtag);
+		    le32toh(data->rtag), adapter->send[i]->rtag);
 	}
-	sifr->val = le32toh(*(p32 + 1));
+	sifr->val = le32toh(data->val);
 	adapter->recv[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
 	mtx_unlock_spin(&adapter->recv[i]->recv_sleep);
 

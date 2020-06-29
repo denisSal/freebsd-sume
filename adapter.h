@@ -121,7 +121,7 @@ struct irq {
 } __aligned(CACHE_LINE_SIZE);
 
 struct riffa_chnl_dir {
-	void			*buf_addr;	/* S/G addresses+len. */
+	char			*buf_addr;	/* S/G addresses+len. */
 	bus_addr_t		buf_hw_addr;	/* -- " -- mapped. */
 	int			num_sg;
 	unsigned int		state;
@@ -183,4 +183,11 @@ struct metadata {
 	uint16_t		magic;
 	uint32_t		t1;
 	uint32_t		t2;
+};
+
+struct regop_data {
+	uint32_t		addr;
+	uint32_t		val;
+	uint32_t		rtag;
+	uint32_t		strb;
 };
