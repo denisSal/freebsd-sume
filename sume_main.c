@@ -1202,6 +1202,34 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 }
 
 static void
+sume_if_start(struct ifnet *ifp)
+{
+	struct nf_priv	*port = ifp->if_softc;
+	struct mbuf		*m_head;
+
+	if ((ifp->if_drv_flags & (IFF_DRV_RUNNING|IFF_DRV_OACTIVE)) !=
+	    IFF_DRV_RUNNING)
+		return;
+	if (!port->port_up)
+		return;
+
+	while (!IFQ_DRV_IS_EMPTY(&ifp->if_snd)) {
+		IFQ_DRV_DEQUEUE(&ifp->if_snd, m_head);
+		if (m_head == NULL)
+			break;
+		/*
+		*  Encapsulation can modify our pointer, and or make it
+		*  NULL on failure.  In that event, we can't requeue.
+		*/
+		if (sume_start_xmit(ifp, m_head)) {
+			if (m_head != NULL)
+				IFQ_DRV_PREPEND(&ifp->if_snd, m_head);
+			break;
+		}
+	}
+}
+
+static void
 sume_qflush(struct ifnet *ifp)
 {
 
@@ -1227,8 +1255,9 @@ sume_ifp_alloc(struct sume_adapter *adapter, unsigned int port)
 	if_initname(ifp, SUME_ETH_DEVICE_NAME, port);
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
 
+	ifp->if_start = sume_if_start;
 	ifp->if_ioctl = sume_if_ioctl;
-	ifp->if_transmit = sume_start_xmit;
+	//ifp->if_transmit = sume_start_xmit;
 	ifp->if_qflush = sume_qflush;
 
 	nf_priv->adapter = adapter;
