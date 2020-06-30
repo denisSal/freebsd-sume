@@ -86,14 +86,11 @@
 
 /* Accessor macros. */
 #define	SUME_RIFFA_LAST(offlast)	((offlast) & 0x01)
-#define	SUME_RIFFA_OFFSET(offlast)	\
-    ((unsigned long long)((offlast) >> 1) << 2)
-#define	SUME_RIFFA_LEN(len)		((unsigned long long)(len) << 2)
+#define	SUME_RIFFA_OFFSET(offlast)	((uint64_t)((offlast) >> 1) << 2)
+#define	SUME_RIFFA_LEN(len)		((uint64_t)(len) << 2)
 
-#define	SUME_RIFFA_SG_LO_ADDR(sg)	(sg_dma_address(sg) & 0xffffffff); // 0xffffffff brisi
-#define	SUME_RIFFA_SG_HI_ADDR(sg)	\
-    ((sg_dma_address(sg) >> 32) & 0xffffffff);
-#define	SUME_RIFFA_SG_LEN(sg)		(sg_dma_len(sg) >> 2)	/* Words. */
+#define	SUME_RIFFA_LO_ADDR(addr)	(addr & 0xFFFFFFFF)
+#define	SUME_RIFFA_HI_ADDR(addr)	((addr >> 32) & 0xFFFFFFFF)
 
 #define	SUME_MSI_RXQUE			(1 << 0)
 #define	SUME_MSI_RXBUF			(1 << 1)
@@ -103,19 +100,19 @@
 
 struct irq {
 	struct resource		*res;
-	int			rid;
+	uint32_t		rid;
 	void			*tag;
 } __aligned(CACHE_LINE_SIZE);
 
 struct riffa_chnl_dir {
 	char			*buf_addr;	/* S/G addresses+len. */
 	bus_addr_t		buf_hw_addr;	/* -- " -- mapped. */
-	int			num_sg;
-	unsigned int		state;
-	unsigned int		flags;
-	unsigned int		offlast;
-	unsigned int		len;		/* words */
-	unsigned int		rtag;
+	uint32_t		num_sg;
+	uint32_t		state;
+	uint32_t		flags;
+	uint32_t		offlast;
+	uint32_t		len;		/* words */
+	uint32_t		rtag;
 
 	bus_dma_tag_t		my_tag;
 	bus_dmamap_t		my_map;
@@ -123,7 +120,7 @@ struct riffa_chnl_dir {
 	/* Used only for register read/write */
 	struct mtx		send_sleep;
 	struct mtx		recv_sleep;
-	int			event;
+	uint32_t		event;
 };
 
 struct sume_ifreq {
@@ -134,24 +131,24 @@ struct sume_ifreq {
 struct nf_priv {
 	struct sume_adapter	*adapter;
 	struct ifnet		*ifp;
-	unsigned int		port;
-	unsigned int		port_up;
-	unsigned int		msg_enable;
-	unsigned int		riffa_channel;
+	uint32_t		port;
+	uint32_t		port_up;
+	uint32_t		msg_enable;
+	uint32_t		riffa_channel;
 	struct ifmedia		media;
 };
 
 struct sume_adapter {
 	device_t		dev;
-	int			rid;
+	uint32_t		rid;
 	struct resource		*bar0_addr;
 	bus_size_t		bar0_len;
 	bus_space_tag_t		bt;
 	bus_space_handle_t	bh;
 	struct irq		irq;
-	int			num_chnls;
-	int			num_sg;
-	int			sg_buf_size;
+	uint32_t		num_chnls;
+	uint32_t		num_sg;
+	uint32_t		sg_buf_size;
 	volatile int		running;
 	struct ifnet		*ifp[4];
 	struct nf_priv		port[4];
@@ -160,8 +157,8 @@ struct sume_adapter {
 	struct riffa_chnl_dir	**recv;
 	struct riffa_chnl_dir	**send;
 
-	unsigned int		vect0;
-	unsigned int		vect1;
+	uint32_t		vect0;
+	uint32_t		vect1;
 };
 
 struct metadata {

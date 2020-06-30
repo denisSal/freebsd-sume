@@ -141,9 +141,9 @@ void sume_intr_handler(void *);
 static int sume_intr_filter(void *);
 static int sume_if_ioctl(struct ifnet *, unsigned long, caddr_t);
 static int sume_riffa_fill_sg_buf(struct sume_adapter *,
-    struct riffa_chnl_dir *, unsigned long long);
-static inline unsigned int read_reg(struct sume_adapter *, int);
-static inline void write_reg(struct sume_adapter *, int, unsigned int);
+    struct riffa_chnl_dir *, uint64_t);
+static inline uint32_t read_reg(struct sume_adapter *, int);
+static inline void write_reg(struct sume_adapter *, int, uint32_t);
 
 #define	DEBUG // replace with sysctl variable
 
@@ -154,7 +154,7 @@ struct {
 	{0x7028, "NetFPGA SUME"},
 };
 
-static inline unsigned int
+static inline uint32_t
 read_reg(struct sume_adapter *adapter, int offset)
 {
 
@@ -162,7 +162,7 @@ read_reg(struct sume_adapter *adapter, int offset)
 }
 
 static inline void
-write_reg(struct sume_adapter *adapter, int offset, unsigned int val)
+write_reg(struct sume_adapter *adapter, int offset, uint32_t val)
 {
 
 	bus_space_write_4(adapter->bt, adapter->bh, offset << 2, val);
@@ -197,7 +197,7 @@ sume_probe(device_t dev)
  * correct interface to rcvif and send the packet to the OS with if_input.
  */
 static int
-sume_rx_build_mbuf(struct sume_adapter *adapter, int i, unsigned int len)
+sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 {
 	struct mbuf *m;
 	struct ifnet *ifp;
@@ -369,9 +369,9 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	/* DMA. */
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_LO_REG_OFF),
-	    (adapter->send[i]->buf_hw_addr & 0xFFFFFFFF));
+	    SUME_RIFFA_LO_ADDR(adapter->send[i]->buf_hw_addr));
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_HI_REG_OFF),
-	    ((adapter->send[i]->buf_hw_addr >> 32) & 0xFFFFFFFF));
+	    SUME_RIFFA_HI_ADDR(adapter->send[i]->buf_hw_addr));
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_LEN_REG_OFF),
 	    4 * adapter->send[i]->num_sg);
 
@@ -425,8 +425,8 @@ void
 sume_intr_handler(void *arg)
 {
 	struct sume_adapter *adapter = arg;
-	unsigned int vect, vect0, vect1;
-	int i, error, loops, len;
+	uint32_t vect, vect0, vect1, len;
+	int i, error, loops;
 	device_t dev = adapter->dev;
 	int flags = MTX_RECURSE;
 
@@ -533,7 +533,7 @@ sume_intr_handler(void *arg)
 			switch (adapter->recv[i]->state) {
 			case SUME_RIFFA_CHAN_STATE_IDLE:
 				if (vect & SUME_MSI_RXQUE) {
-					unsigned long max_ptr;
+					uint32_t max_ptr;
 
 					/* Clear recovery state. */
 					adapter->recv[i]->flags &=
@@ -548,13 +548,13 @@ sume_intr_handler(void *arg)
 					    RIFFA_TX_LEN_REG_OFF));
 
 					/* Boundary checks. */
-					max_ptr = (unsigned long) ((char *)
+					max_ptr = (uint32_t) ((char *)
 					    adapter->recv[i]->buf_addr
 					    + SUME_RIFFA_OFFSET(
 					    adapter->recv[i]->offlast) +
 					    SUME_RIFFA_LEN(
 					    adapter->recv[i]->len) - 1);
-					if (max_ptr < (unsigned long)
+					if (max_ptr < (uint32_t)
 					    adapter->recv[i]->buf_addr) {
 						device_printf(dev, "%s: "
 						    "receive buffer "
@@ -588,13 +588,13 @@ sume_intr_handler(void *arg)
 					write_reg(adapter,
 					    RIFFA_CHNL_REG(i,
 					    RIFFA_TX_SG_ADDR_LO_REG_OFF),
-					    (adapter->recv[i]->buf_hw_addr
-					    & 0xFFFFFFFF));
+					    SUME_RIFFA_LO_ADDR(
+					    adapter->recv[i]->buf_hw_addr));
 					write_reg(adapter,
 					    RIFFA_CHNL_REG(i,
 					    RIFFA_TX_SG_ADDR_HI_REG_OFF),
-					    ((adapter->recv[i]->buf_hw_addr
-					    >> 32) & 0xFFFFFFFF));
+					    SUME_RIFFA_HI_ADDR(
+					    adapter->recv[i]->buf_hw_addr));
 					write_reg(adapter,
 					    RIFFA_CHNL_REG(i,
 					    RIFFA_TX_SG_LEN_REG_OFF),
@@ -703,7 +703,7 @@ static int
 sume_intr_filter(void *arg)
 {
 	struct sume_adapter *adapter = arg;
-	unsigned int vect0, vect1;
+	uint32_t vect0, vect1;
 	int flags = MTX_RECURSE;
 
 	/*
@@ -890,15 +890,14 @@ sume_if_up(void *arg)
 /* Helper functions. */
 static int
 sume_riffa_fill_sg_buf(struct sume_adapter *adapter, struct riffa_chnl_dir *p,
-    unsigned long long len)
+    uint64_t len)
 {
 	uint32_t *sgtablep;
 
 	sgtablep = (uint32_t *) p->buf_addr;
 
-	sgtablep[0] = (p->buf_hw_addr + 3 * sizeof(uint32_t)) & 0xffffffff;
-	sgtablep[1] = ((p->buf_hw_addr + 3 * sizeof(uint32_t)) >> 32) &
-	    0xffffffff;
+	sgtablep[0] = (p->buf_hw_addr + 3 * sizeof(uint32_t));
+	sgtablep[1] = (p->buf_hw_addr + 3 * sizeof(uint32_t)) >> 32;
 	sgtablep[2] = len;
 
 	p->num_sg = 1;
@@ -936,9 +935,9 @@ sume_reg_wr_locked(struct sume_adapter *adapter, int i)
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	/* DMA. */
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_LO_REG_OFF),
-	    (adapter->send[i]->buf_hw_addr & 0xFFFFFFFF));
+	    SUME_RIFFA_LO_ADDR(adapter->send[i]->buf_hw_addr));
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_HI_REG_OFF),
-	    ((adapter->send[i]->buf_hw_addr >> 32) & 0xFFFFFFFF));
+	    SUME_RIFFA_HI_ADDR(adapter->send[i]->buf_hw_addr));
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_LEN_REG_OFF),
 	    4 * adapter->send[i]->num_sg);
 	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
@@ -1234,7 +1233,7 @@ sume_qflush(struct ifnet *ifp)
 }
 
 static int
-sume_ifp_alloc(struct sume_adapter *adapter, unsigned int port)
+sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 {
 	struct ifnet *ifp;	
 	struct nf_priv *nf_priv = &adapter->port[port];
