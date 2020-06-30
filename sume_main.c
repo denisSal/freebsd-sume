@@ -299,7 +299,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	i = sume_port->riffa_channel;
 	dev = adapter->dev;
 
-	mtx_lock_spin_flags(&adapter->lock, flags);
+	SUME_LOCK(adapter, flags);
 
 	p8 = (uint8_t *) adapter->send[i]->buf_addr + 3 * sizeof(uint32_t);
 	mdata = (struct metadata *) p8;
@@ -307,7 +307,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	 * Check state. It's the best we can do for now.
 	 */
 	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
-		mtx_unlock_spin_flags(&adapter->lock, flags);
+		SUME_UNLOCK(adapter, flags);
 		m_freem(m);
 		return (ENETDOWN);
 	}
@@ -316,7 +316,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 
 	/* Make sure we fit with the 16 bytes metadata. */
 	if ((m->m_len + 16) > adapter->sg_buf_size) {
-		mtx_unlock_spin_flags(&adapter->lock, flags);
+		SUME_UNLOCK(adapter, flags);
 		device_printf(dev, "%s: Packet too big for bounce buffer "
 		    "(%d)\n", __func__, m->m_len);
 		free(m, M_SUME);
@@ -358,7 +358,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	    adapter->send[i], DMA_TO_DEVICE,
 	    SUME_RIFFA_LEN(adapter->send[i]->len));
 	if (error) {
-		mtx_unlock_spin_flags(&adapter->lock, flags);
+		SUME_UNLOCK(adapter, flags);
 		device_printf(dev, "%s: failed to map S/G buffer\n", __func__);
 		m_freem(m);
 		return (ENETDOWN);
@@ -380,7 +380,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
-	mtx_unlock_spin_flags(&adapter->lock, flags);
+	SUME_UNLOCK(adapter, flags);
 
 	/* We can free as long as we use the bounce buffer. */
 	m_freem(m);
@@ -432,7 +432,7 @@ sume_intr_handler(void *arg)
 	device_t dev = adapter->dev;
 	int flags = MTX_RECURSE;
 
-	mtx_lock_spin_flags(&adapter->lock, flags);
+	SUME_LOCK(adapter, flags);
 	vect0 = adapter->vect0;
 	vect1 = adapter->vect1;
 
@@ -695,7 +695,7 @@ sume_intr_handler(void *arg)
 			    "%d\n", __func__, vect, adapter->recv[i]->state,
 			    loops);
 	}
-	mtx_unlock_spin_flags(&adapter->lock, flags);
+	SUME_UNLOCK(adapter, flags);
 }
 
 /* Filtering interrupts. We wait for the adapter to go into the 'running' state
@@ -717,7 +717,7 @@ sume_intr_filter(void *arg)
 		return (FILTER_STRAY);
 
 	/* XXX-BZ We would turn interrupt generation off. */
-	mtx_lock_spin_flags(&adapter->lock, flags);
+	SUME_LOCK(adapter, flags);
 
 	vect0 = read_reg(adapter, RIFFA_IRQ_REG0_OFF);
 	if((vect0 & 0xC0000000) != 0) {
@@ -734,7 +734,7 @@ sume_intr_filter(void *arg)
 	/* XXX-BZ We would turn interrupt generation back on. */
 	adapter->vect0 = vect0;
 	adapter->vect1 = vect1;
-	mtx_unlock_spin_flags(&adapter->lock, flags);
+	SUME_UNLOCK(adapter, flags);
 
 	return (FILTER_SCHEDULE_THREAD);
 }
@@ -974,10 +974,10 @@ sume_initiate_reg_write(struct sume_port *sume_port, struct sume_ifreq *sifr,
 	 * 4. Sleep and wait for result and return success or error.
 	 */
 	i = SUME_RIFFA_CHANNEL_REG;
-	mtx_lock_spin(&adapter->send[i]->send_sleep);
+	mtx_lock(&adapter->send[i]->send_sleep);
 
 	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
-		mtx_unlock_spin(&adapter->send[i]->send_sleep);
+		mtx_unlock(&adapter->send[i]->send_sleep);
 		return (EBUSY);
 	}
 
@@ -992,18 +992,18 @@ sume_initiate_reg_write(struct sume_port *sume_port, struct sume_ifreq *sifr,
 
 	error = sume_reg_wr_locked(adapter, i);
 	if (error) {
-		mtx_unlock_spin(&adapter->send[i]->send_sleep);
+		mtx_unlock(&adapter->send[i]->send_sleep);
 		return (EFAULT);
 	}
 
 	/* Timeout after 1s. */
-	error = msleep_spin(&adapter->send[i]->event,
-	    &adapter->send[i]->send_sleep, "Waiting recv to finish", 1 * hz);
+	error = msleep(&adapter->send[i]->event,
+	    &adapter->send[i]->send_sleep, 0, "Waiting recv finish", 1 * hz);
 
 	if (error == EWOULDBLOCK) {
 		device_printf(adapter->dev, "%s: wait error: %d\n", __func__,
 		    error);
-		mtx_unlock_spin(&adapter->send[i]->send_sleep);
+		mtx_unlock(&adapter->send[i]->send_sleep);
 		return (EWOULDBLOCK);
 	}
 
@@ -1025,7 +1025,7 @@ sume_initiate_reg_write(struct sume_port *sume_port, struct sume_ifreq *sifr,
 	 * event.
 	 */
 
-	mtx_unlock_spin(&adapter->send[i]->send_sleep);
+	mtx_unlock(&adapter->send[i]->send_sleep);
 
 	return (error);
 }
@@ -1051,16 +1051,16 @@ sume_read_reg_result(struct sume_port *sume_port, struct sume_ifreq *sifr)
 
 	/* We only need to be woken up at the end of the transaction. */
 	/* Timeout after 1s. */
-	mtx_lock_spin(&adapter->recv[i]->recv_sleep);
+	mtx_lock(&adapter->recv[i]->recv_sleep);
 	bus_dmamap_sync(adapter->recv[i]->my_tag, adapter->recv[i]->my_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
-	error = msleep_spin(&adapter->recv[i]->event,
-	    &adapter->recv[i]->recv_sleep, "Waiting transaction to finish",
+	error = msleep(&adapter->recv[i]->event,
+	    &adapter->recv[i]->recv_sleep, 0, "Waiting transaction finish",
 	    1 * hz);
 
 	if (error == EWOULDBLOCK) {
 		device_printf(dev, "%s: wait error: %d\n", __func__, error);
-		mtx_unlock_spin(&adapter->recv[i]->recv_sleep);
+		mtx_unlock(&adapter->recv[i]->recv_sleep);
 		return (EWOULDBLOCK);
 	}
 	bus_dmamap_sync(adapter->recv[i]->my_tag, adapter->recv[i]->my_map,
@@ -1079,7 +1079,7 @@ sume_read_reg_result(struct sume_port *sume_port, struct sume_ifreq *sifr)
 	}
 	sifr->val = le32toh(data->val);
 	adapter->recv[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
-	mtx_unlock_spin(&adapter->recv[i]->recv_sleep);
+	mtx_unlock(&adapter->recv[i]->recv_sleep);
 
 	/* We are done. */
 	adapter->send[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
@@ -1107,21 +1107,21 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 	case SIOCSIFFLAGS:
 		if (atomic_load_int(&adapter->running) == 0)
 			break;
-		mtx_lock_spin_flags(&adapter->lock, flags);
+		SUME_LOCK(adapter, flags);
 		if (ifp->if_flags & IFF_UP) {
 			if (ifp->if_drv_flags & IFF_DRV_RUNNING)
 				sume_if_up(ifp);
 		} else if (ifp->if_drv_flags & IFF_DRV_RUNNING)
 			sume_if_down(ifp);
-		mtx_unlock_spin_flags(&adapter->lock, flags);
+		SUME_UNLOCK(adapter, flags);
 		break;
 
 	case SIOCGIFXMEDIA:
 		if (atomic_load_int(&adapter->running) == 0)
 			break;
-		mtx_lock_spin_flags(&adapter->lock, flags);
+		SUME_LOCK(adapter, flags);
 		ifmedia_ioctl(ifp, ifr, &sume_port->media, cmd);
-		mtx_unlock_spin_flags(&adapter->lock, flags);
+		SUME_UNLOCK(adapter, flags);
 		break;
 
 	case SIOCSIFADDR:
@@ -1334,8 +1334,8 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 		rp[i]->buf_hw_addr = hw_addr;
 
 		/* Initialize state. */
-		mtx_init(&rp[i]->send_sleep, "Send sleep", NULL, MTX_SPIN);
-		mtx_init(&rp[i]->recv_sleep, "Recv sleep", NULL, MTX_SPIN);
+		mtx_init(&rp[i]->send_sleep, "Send sleep", NULL, MTX_DEF);
+		mtx_init(&rp[i]->recv_sleep, "Recv sleep", NULL, MTX_DEF);
 
 		rp[i]->rtag = -3;
 		rp[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
@@ -1372,7 +1372,7 @@ sume_attach(device_t dev)
 		sume_nports = SUME_PORTS_MAX;
 	}
 
-	mtx_init(&adapter->lock, "Global lock", NULL, MTX_SPIN);
+	mtx_init(&adapter->lock, "Global lock", NULL, MTX_DEF);
 
 	atomic_set_int(&adapter->running, 0);
 

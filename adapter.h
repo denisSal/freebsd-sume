@@ -36,9 +36,9 @@
 #define SUME_IOCTL_CMD_READ_REG		(SIOCGPRIVATE_1)
 
 #define SUME_LOCK(adapter, flags)	\
-    spin_lock_irqsave(&adapter->lock, flags);
+    mtx_lock_flags(&adapter->lock, flags);
 #define SUME_UNLOCK(adapter, flags)	\
-    spin_unlock_irqrestore(&adapter->lock, flags);
+    mtx_unlock_flags(&adapter->lock, flags);
 
 #define SUME_LOCK_RX(adapter, i, flags)
 #define SUME_UNLOCK_RX(adapter, i, flags)
