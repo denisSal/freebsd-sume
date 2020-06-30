@@ -101,14 +101,6 @@
 #define	SUME_MSI_TXBUF			(1 << 3)
 #define	SUME_MSI_TXDONE			(1 << 4)
 
-/* find where this is defined */ // delete?
-enum dma_data_direction {
-	DMA_BIDIRECTIONAL = 0,
-	DMA_TO_DEVICE = 1,
-	DMA_FROM_DEVICE = 2,
-	DMA_NONE = 3,
-};
-
 struct irq {
 	struct resource		*res;
 	int			rid;

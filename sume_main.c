@@ -141,8 +141,7 @@ void sume_intr_handler(void *);
 static int sume_intr_filter(void *);
 static int sume_if_ioctl(struct ifnet *, unsigned long, caddr_t);
 static int sume_riffa_fill_sg_buf(struct sume_adapter *,
-    struct riffa_chnl_dir *, enum dma_data_direction,
-    unsigned long long);
+    struct riffa_chnl_dir *, unsigned long long);
 static inline unsigned int read_reg(struct sume_adapter *, int);
 static inline void write_reg(struct sume_adapter *, int, unsigned int);
 
@@ -355,8 +354,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 
 	/* Fill the S/G map. */
 	error = sume_riffa_fill_sg_buf(adapter,
-	    adapter->send[i], DMA_TO_DEVICE,
-	    SUME_RIFFA_LEN(adapter->send[i]->len));
+	    adapter->send[i], SUME_RIFFA_LEN(adapter->send[i]->len));
 	if (error) {
 		SUME_UNLOCK(adapter, flags);
 		device_printf(dev, "%s: failed to map S/G buffer\n", __func__);
@@ -575,8 +573,7 @@ sume_intr_handler(void *arg)
 
 					/* Build and load S/G map. */
 					error = sume_riffa_fill_sg_buf(adapter,
-					    adapter->recv[i], DMA_FROM_DEVICE,
-					    SUME_RIFFA_LEN(
+					    adapter->recv[i], SUME_RIFFA_LEN(
 					    adapter->recv[i]->len));
 					if (error != 0) {
 						device_printf(dev, "%s: "
@@ -893,7 +890,7 @@ sume_if_up(void *arg)
 /* Helper functions. */
 static int
 sume_riffa_fill_sg_buf(struct sume_adapter *adapter, struct riffa_chnl_dir *p,
-    enum dma_data_direction dir, unsigned long long len)
+    unsigned long long len)
 {
 	uint32_t *sgtablep;
 
@@ -926,7 +923,7 @@ sume_reg_wr_locked(struct sume_adapter *adapter, int i)
 
 	/* Fill the S/G map. */
 	error = sume_riffa_fill_sg_buf(adapter, adapter->send[i],
-	    DMA_TO_DEVICE, SUME_RIFFA_LEN(adapter->send[i]->len));
+	    SUME_RIFFA_LEN(adapter->send[i]->len));
 	if (error != 0) {
 		device_printf(dev, "%s: failed to map S/G buffer\n", __func__);
 		return (EFAULT);
