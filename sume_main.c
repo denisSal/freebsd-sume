@@ -54,7 +54,7 @@
 #include <net/if_media.h>
 #include "adapter.h"
 
-#define PCI_VENDOR_ID_XILINX 0x10ee
+#define	PCI_VENDOR_ID_XILINX 0x10ee
 
 /* SUME bus driver interface */
 static int sume_probe(device_t);
@@ -146,7 +146,7 @@ static int sume_riffa_fill_sg_buf(struct sume_adapter *,
 static inline unsigned int read_reg(struct sume_adapter *, int);
 static inline void write_reg(struct sume_adapter *, int, unsigned int);
 
-#define DEBUG // replace with sysctl variable
+#define	DEBUG // replace with sysctl variable
 
 struct {
 	uint16_t device;
@@ -202,12 +202,12 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, unsigned int len)
 {
 	struct mbuf *m;
 	struct ifnet *ifp;
-	struct sume_port *sume_port;
+	struct nf_priv *nf_priv;
 	int np;
 	uint32_t t1, t2;
 	uint16_t sport, dport, dp, plen, magic;
 	uint8_t *p8 = (uint8_t *) adapter->recv[i]->buf_addr + 3 *
-	    sizeof(uint32_t);
+	    sizeof(uint32_t); // struct descriptor
 	device_t dev = adapter->dev;
 	struct metadata *mdata = (struct metadata *) p8;
 
@@ -251,8 +251,8 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, unsigned int len)
 	ifp = adapter->ifp[np];
 
 	/* If the interface is down, well, we are done. */
-	sume_port = ifp->if_softc;
-	if (sume_port->port_up == 0) {
+	nf_priv = ifp->if_softc;
+	if (nf_priv->port_up == 0) {
 		device_printf(dev, "Device not up.\n");
 		return (ENETDOWN);
 	}
@@ -262,7 +262,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, unsigned int len)
 #endif
 	m = m_getm(NULL, plen, M_NOWAIT, MT_DATA);
 	if (m == NULL) {
-		free(m, M_SUME);
+		m_freem(m);
 		return (ENOMEM);
 	}
 
@@ -287,16 +287,16 @@ static int
 sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 {
 	struct sume_adapter *adapter;
-	struct sume_port *sume_port;
-	uint8_t *p8;
+	struct nf_priv *nf_priv;
+	uint8_t *p8; // change p8 to something better
 	int error, i, last, offset;
 	device_t dev;
 	struct metadata *mdata;
 	int flags = MTX_RECURSE;
 
-	sume_port = ifp->if_softc;
-	adapter = sume_port->adapter;
-	i = sume_port->riffa_channel;
+	nf_priv = ifp->if_softc;
+	adapter = nf_priv->adapter;
+	i = nf_priv->riffa_channel;
 	dev = adapter->dev;
 
 	SUME_LOCK(adapter, flags);
@@ -319,12 +319,12 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 		SUME_UNLOCK(adapter, flags);
 		device_printf(dev, "%s: Packet too big for bounce buffer "
 		    "(%d)\n", __func__, m->m_len);
-		free(m, M_SUME);
+		m_freem(m);
 		return (ENOMEM);
 	}
 
 #ifdef DEBUG
-	printf("Trying to send %d bytes to nf%d\n", m->m_len, sume_port->port);
+	printf("Trying to send %d bytes to nf%d\n", m->m_len, nf_priv->port);
 #endif
 	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
@@ -337,9 +337,9 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 
 	/* Fill in the metadata. */
 	mdata->sport = htole16(
-	    1 << (sume_port->port * 2 + 1)); /* CPU(DMA) ports are odd. */
+	    1 << (nf_priv->port * 2 + 1)); /* CPU(DMA) ports are odd. */
 	mdata->dport = htole16(
-	    1 << (sume_port->port * 2)); /* MAC ports are even. */
+	    1 << (nf_priv->port * 2)); /* MAC ports are even. */
 	mdata->plen = htole16(m->m_len);
 	mdata->magic = htole16(SUME_RIFFA_MAGIC);
 	mdata->t1 = htole32(0);
@@ -864,30 +864,30 @@ static void
 sume_if_down(void *arg)
 {
 	struct ifnet *ifp = arg;
-	struct sume_port *sume_port = ifp->if_softc;
+	struct nf_priv *nf_priv = ifp->if_softc;
 
-	if (!sume_port->port_up)
+	if (!nf_priv->port_up)
 		return; /* already down */
 
 	if_down(ifp);
-	sume_port->port_up = 0;
+	nf_priv->port_up = 0;
 
-	printf("SUME nf%d down.\n", sume_port->port);
+	printf("SUME nf%d down.\n", nf_priv->port);
 }
 
 static void
 sume_if_up(void *arg)
 {
 	struct ifnet *ifp = arg;
-	struct sume_port *sume_port = ifp->if_softc;
+	struct nf_priv *nf_priv = ifp->if_softc;
 
-	if (sume_port->port_up)
+	if (nf_priv->port_up)
 		return; /* already up */
 
 	if_up(ifp);
-	sume_port->port_up = 1;
+	nf_priv->port_up = 1;
 
-	printf("SUME nf%d up.\n", sume_port->port);
+	printf("SUME nf%d up.\n", nf_priv->port);
 }
 
 /* Helper functions. */
@@ -957,14 +957,14 @@ sume_reg_wr_locked(struct sume_adapter *adapter, int i)
  * address and the result will need to be DMAed back.
  */
 static int
-sume_initiate_reg_write(struct sume_port *sume_port, struct sume_ifreq *sifr,
+sume_initiate_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
     uint32_t strb)
 {
 	struct sume_adapter *adapter;
 	struct regop_data *data;
 	int error = 0, i;
 
-	adapter = sume_port->adapter;
+	adapter = nf_priv->adapter;
 
 	/*
 	 * 1. Make sure the channel is free;  otherwise return EBUSY.
@@ -1031,14 +1031,14 @@ sume_initiate_reg_write(struct sume_port *sume_port, struct sume_ifreq *sifr,
 }
 
 static int
-sume_read_reg_result(struct sume_port *sume_port, struct sume_ifreq *sifr)
+sume_read_reg_result(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 {
 	struct sume_adapter *adapter;
 	struct regop_data *data;
 	int error, i;
 	device_t dev;
 
-	adapter = sume_port->adapter;
+	adapter = nf_priv->adapter;
 	dev = adapter->dev;
 
 	/*
@@ -1090,18 +1090,18 @@ sume_read_reg_result(struct sume_port *sume_port, struct sume_ifreq *sifr)
 static int
 sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 {
-	struct sume_port *sume_port;
+	struct nf_priv *nf_priv;
 	struct ifreq *ifr = (struct ifreq *) data;
 	struct sume_ifreq sifr;
 	int error = 0;
 	struct sume_adapter *adapter;
 	int flags = MTX_RECURSE;
 
-	sume_port = ifp->if_softc;
-	if (sume_port == NULL || sume_port->adapter == NULL)
+	nf_priv = ifp->if_softc;
+	if (nf_priv == NULL || nf_priv->adapter == NULL)
 		return (EINVAL);
 
-	adapter = sume_port->adapter;
+	adapter = nf_priv->adapter;
 
 	switch (cmd) {
 	case SIOCSIFFLAGS:
@@ -1120,7 +1120,7 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 		if (atomic_load_int(&adapter->running) == 0)
 			break;
 		SUME_LOCK(adapter, flags);
-		ifmedia_ioctl(ifp, ifr, &sume_port->media, cmd);
+		ifmedia_ioctl(ifp, ifr, &nf_priv->media, cmd);
 		SUME_UNLOCK(adapter, flags);
 		break;
 
@@ -1136,7 +1136,7 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 			error = EINVAL;
 			break;
 		}
-		error = sume_initiate_reg_write(sume_port, &sifr, 0x1f);
+		error = sume_initiate_reg_write(nf_priv, &sifr, 0x1f);
 		break;
 
 	case SUME_IOCTL_CMD_READ_REG:
@@ -1146,11 +1146,11 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 			break;
 		}
 
-		error = sume_initiate_reg_write(sume_port, &sifr, 0x00);
+		error = sume_initiate_reg_write(nf_priv, &sifr, 0x00);
 		if (error)
 			break;
 
-		error = sume_read_reg_result(sume_port, &sifr);
+		error = sume_read_reg_result(nf_priv, &sifr);
 		if (error)
 			break;
 
@@ -1171,8 +1171,8 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 static int
 sume_media_change(struct ifnet *ifp)
 {
-	struct sume_port *sume_port = ifp->if_softc;
-	struct ifmedia *ifm = &sume_port->media;
+	struct nf_priv *nf_priv = ifp->if_softc;
+	struct ifmedia *ifm = &nf_priv->media;
 
 	if (IFM_TYPE(ifm->ifm_media) != IFM_ETHER)
 		return (EINVAL);
@@ -1187,11 +1187,11 @@ sume_media_change(struct ifnet *ifp)
 static void
 sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 {
-	struct sume_port *sume_port = ifp->if_softc;
-	struct ifmedia *ifm = &sume_port->media;
+	struct nf_priv *nf_priv = ifp->if_softc;
+	struct ifmedia *ifm = &nf_priv->media;
 
 	if (ifm->ifm_cur->ifm_media == (IFM_ETHER | IFM_10G_SR) &&
-	    sume_port->port_up)
+	    nf_priv->port_up)
 		ifmr->ifm_active = IFM_ETHER | IFM_10G_SR;
 	else
 		ifmr->ifm_active = ifm->ifm_cur->ifm_media;
@@ -1212,7 +1212,7 @@ static int
 sume_ifp_alloc(struct sume_adapter *adapter, unsigned int port)
 {
 	struct ifnet *ifp;	
-	struct sume_port *sume_port = &adapter->port[port];	
+	struct nf_priv *nf_priv = &adapter->port[port];
 	device_t dev = adapter->dev;
 
 	ifp = if_alloc(IFT_ETHER);
@@ -1222,7 +1222,7 @@ sume_ifp_alloc(struct sume_adapter *adapter, unsigned int port)
 	}
 
 	adapter->ifp[port] = ifp;
-	ifp->if_softc = sume_port;
+	ifp->if_softc = nf_priv;
 
 	if_initname(ifp, SUME_ETH_DEVICE_NAME, port);
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
@@ -1231,10 +1231,10 @@ sume_ifp_alloc(struct sume_adapter *adapter, unsigned int port)
 	ifp->if_transmit = sume_start_xmit;
 	ifp->if_qflush = sume_qflush;
 
-	sume_port->adapter = adapter;
-	sume_port->ifp = ifp;
-	sume_port->port = port;
-	sume_port->riffa_channel = SUME_RIFFA_CHANNEL_DATA;
+	nf_priv->adapter = adapter;
+	nf_priv->ifp = ifp;
+	nf_priv->port = port;
+	nf_priv->riffa_channel = SUME_RIFFA_CHANNEL_DATA;
 
 	adapter->ifp[port] = ifp;
 
@@ -1242,10 +1242,10 @@ sume_ifp_alloc(struct sume_adapter *adapter, unsigned int port)
 	hw_addr[ETHER_ADDR_LEN-1] = port;
 	ether_ifattach(ifp, hw_addr);
 
-	ifmedia_init(&sume_port->media, IFM_IMASK, sume_media_change,
+	ifmedia_init(&nf_priv->media, IFM_IMASK, sume_media_change,
 	    sume_media_status);
-	ifmedia_add(&sume_port->media, IFM_ETHER | IFM_10G_SR, 0, NULL);
-	ifmedia_set(&sume_port->media, IFM_ETHER | IFM_10G_SR);
+	ifmedia_add(&nf_priv->media, IFM_ETHER | IFM_10G_SR, 0, NULL);
+	ifmedia_set(&nf_priv->media, IFM_ETHER | IFM_10G_SR);
 
 	ifp->if_drv_flags |= IFF_DRV_RUNNING;
 
@@ -1424,6 +1424,8 @@ sume_remove_riffa_buffer(const struct sume_adapter *adapter,
 			pp[i]->buf_hw_addr = 0;
 		}
 
+		mtx_destroy(&pp[i]->recv_sleep);
+		mtx_destroy(&pp[i]->send_sleep);
 		free(pp[i], M_SUME);
 	}
 }
@@ -1459,6 +1461,8 @@ sume_detach(device_t dev)
 			ether_ifdetach(adapter->ifp[i]);
 		}
 	}
+
+	mtx_destroy(&adapter->lock);
 
 	rc = bus_generic_detach(dev);
 	if (rc)

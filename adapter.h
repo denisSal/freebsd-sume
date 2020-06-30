@@ -25,69 +25,64 @@
  * SUCH DAMAGE.
  */
 
-#define DEFAULT_ETHER_ADDRESS		"\02SUME\00"
-#define SUME_ETH_DEVICE_NAME		"nf"
+#define	DEFAULT_ETHER_ADDRESS		"\02SUME\00"
+#define	SUME_ETH_DEVICE_NAME		"nf"
 
 #ifndef SUME_PORTS_MAX
-#define SUME_PORTS_MAX			4
+#define	SUME_PORTS_MAX			4
 #endif
 
-#define SUME_IOCTL_CMD_WRITE_REG	(SIOCGPRIVATE_0)
-#define SUME_IOCTL_CMD_READ_REG		(SIOCGPRIVATE_1)
+#define	SUME_IOCTL_CMD_WRITE_REG	(SIOCGPRIVATE_0)
+#define	SUME_IOCTL_CMD_READ_REG		(SIOCGPRIVATE_1)
 
-#define SUME_LOCK(adapter, flags)	\
+#define	SUME_LOCK(adapter, flags)	\
     mtx_lock_flags(&adapter->lock, flags);
-#define SUME_UNLOCK(adapter, flags)	\
+#define	SUME_UNLOCK(adapter, flags)	\
     mtx_unlock_flags(&adapter->lock, flags);
 
-#define SUME_LOCK_RX(adapter, i, flags)
-#define SUME_UNLOCK_RX(adapter, i, flags)
-#define SUME_LOCK_TX(adapter, i, flags)
-#define SUME_UNLOCK_TX(adapter, i, flags)
-
 /* Currently SUME only uses two fixed channels for all port traffic and regs. */
-#define SUME_RIFFA_CHANNEL_DATA		0
-#define SUME_RIFFA_CHANNEL_REG		1	/* See description at top. */
-#define SUME_RIFFA_CHANNELS		2
+#define	SUME_RIFFA_CHANNEL_DATA		0
+#define	SUME_RIFFA_CHANNEL_REG		1	/* See description at top. */
+#define	SUME_RIFFA_CHANNELS		2
 
 /* RIFFA constants. */
-#define RIFFA_MAX_CHNLS			12
-#define RIFFA_MAX_BUS_WIDTH_PARAM	4
-#define RIFFA_SG_BUF_SIZE		(4*1024)
-#define RIFFA_SG_ELEMS			200
+#define	RIFFA_MAX_CHNLS			12
+#define	RIFFA_MAX_BUS_WIDTH_PARAM	4
+#define	RIFFA_SG_BUF_SIZE		(4*1024)
+#define	RIFFA_SG_ELEMS			200
 
 /* RIFFA register offsets. */
-#define RIFFA_RX_SG_LEN_REG_OFF		0x0
-#define RIFFA_RX_SG_ADDR_LO_REG_OFF	0x1
-#define RIFFA_RX_SG_ADDR_HI_REG_OFF	0x2
-#define RIFFA_RX_LEN_REG_OFF		0x3
-#define RIFFA_RX_OFFLAST_REG_OFF	0x4
-#define RIFFA_TX_SG_LEN_REG_OFF		0x5
-#define RIFFA_TX_SG_ADDR_LO_REG_OFF	0x6
-#define RIFFA_TX_SG_ADDR_HI_REG_OFF	0x7
-#define RIFFA_TX_LEN_REG_OFF		0x8
-#define RIFFA_TX_OFFLAST_REG_OFF	0x9
-#define RIFFA_INFO_REG_OFF		0xA
-#define RIFFA_IRQ_REG0_OFF		0xB
-#define RIFFA_IRQ_REG1_OFF		0xC
-#define RIFFA_RX_TNFR_LEN_REG_OFF	0xD
-#define RIFFA_TX_TNFR_LEN_REG_OFF	0xE
+#define	RIFFA_RX_SG_LEN_REG_OFF		0x0
+#define	RIFFA_RX_SG_ADDR_LO_REG_OFF	0x1
+#define	RIFFA_RX_SG_ADDR_HI_REG_OFF	0x2
+#define	RIFFA_RX_LEN_REG_OFF		0x3
+#define	RIFFA_RX_OFFLAST_REG_OFF	0x4
+#define	RIFFA_TX_SG_LEN_REG_OFF		0x5
+#define	RIFFA_TX_SG_ADDR_LO_REG_OFF	0x6
+#define	RIFFA_TX_SG_ADDR_HI_REG_OFF	0x7
+#define	RIFFA_TX_LEN_REG_OFF		0x8
+#define	RIFFA_TX_OFFLAST_REG_OFF	0x9
+#define	RIFFA_INFO_REG_OFF		0xA
+#define	RIFFA_IRQ_REG0_OFF		0xB
+#define	RIFFA_IRQ_REG1_OFF		0xC
+#define	RIFFA_RX_TNFR_LEN_REG_OFF	0xD
+#define	RIFFA_TX_TNFR_LEN_REG_OFF	0xE
 
-#define RIFFA_CHNL_REG(c, o)		((c << 4) + o)
+#define	RIFFA_CHNL_REG(c, o)		((c << 4) + o)
 
 /*
  * RIFFA state machine;
  * rather than using complex circular buffers for 1 transaction.
  */
-#define SUME_RIFFA_CHAN_STATE_IDLE	0x01
-#define SUME_RIFFA_CHAN_STATE_READY	0x02
-#define SUME_RIFFA_CHAN_STATE_READ	0x04
-#define SUME_RIFFA_CHAN_STATE_LEN	0x08
+#define	SUME_RIFFA_CHAN_STATE_IDLE	0x01
+#define	SUME_RIFFA_CHAN_STATE_READY	0x02
+#define	SUME_RIFFA_CHAN_STATE_READ	0x04
+#define	SUME_RIFFA_CHAN_STATE_LEN	0x08
 
-#define SUME_CHAN_STATE_RECOVERY_FLAG	0x80000000
+#define	SUME_CHAN_STATE_RECOVERY_FLAG	0x80000000
 
 /* Various bits and pieces. */
-#define SUME_RIFFA_MAGIC		0xcafe
+#define	SUME_RIFFA_MAGIC		0xcafe
 
 /* Accessor macros. */
 #define	SUME_RIFFA_LAST(offlast)	((offlast) & 0x01)
@@ -95,18 +90,18 @@
     ((unsigned long long)((offlast) >> 1) << 2)
 #define	SUME_RIFFA_LEN(len)		((unsigned long long)(len) << 2)
 
-#define	SUME_RIFFA_SG_LO_ADDR(sg)	(sg_dma_address(sg) & 0xffffffff);
+#define	SUME_RIFFA_SG_LO_ADDR(sg)	(sg_dma_address(sg) & 0xffffffff); // 0xffffffff brisi
 #define	SUME_RIFFA_SG_HI_ADDR(sg)	\
     ((sg_dma_address(sg) >> 32) & 0xffffffff);
 #define	SUME_RIFFA_SG_LEN(sg)		(sg_dma_len(sg) >> 2)	/* Words. */
 
-#define SUME_MSI_RXQUE			(1 << 0)
-#define SUME_MSI_RXBUF			(1 << 1)
-#define SUME_MSI_RXDONE			(1 << 2)
-#define SUME_MSI_TXBUF			(1 << 3)
-#define SUME_MSI_TXDONE			(1 << 4)
+#define	SUME_MSI_RXQUE			(1 << 0)
+#define	SUME_MSI_RXBUF			(1 << 1)
+#define	SUME_MSI_RXDONE			(1 << 2)
+#define	SUME_MSI_TXBUF			(1 << 3)
+#define	SUME_MSI_TXDONE			(1 << 4)
 
-/* find where this is defined */
+/* find where this is defined */ // delete?
 enum dma_data_direction {
 	DMA_BIDIRECTIONAL = 0,
 	DMA_TO_DEVICE = 1,
@@ -133,6 +128,7 @@ struct riffa_chnl_dir {
 	bus_dma_tag_t		my_tag;
 	bus_dmamap_t		my_map;
 
+	/* Used only for register read/write */
 	struct mtx		send_sleep;
 	struct mtx		recv_sleep;
 	int			event;
@@ -143,7 +139,7 @@ struct sume_ifreq {
 	uint32_t		val;
 };
 
-struct sume_port {
+struct nf_priv {
 	struct sume_adapter	*adapter;
 	struct ifnet		*ifp;
 	unsigned int		port;
@@ -166,7 +162,7 @@ struct sume_adapter {
 	int			sg_buf_size;
 	volatile int		running;
 	struct ifnet		*ifp[4];
-	struct sume_port	port[4];
+	struct nf_priv		port[4];
 	struct mtx		lock;
 
 	struct riffa_chnl_dir	**recv;
