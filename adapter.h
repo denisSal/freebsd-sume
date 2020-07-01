@@ -35,10 +35,10 @@
 #define	SUME_IOCTL_CMD_WRITE_REG	(SIOCGPRIVATE_0)
 #define	SUME_IOCTL_CMD_READ_REG		(SIOCGPRIVATE_1)
 
-#define	SUME_LOCK(adapter, flags)	\
-    mtx_lock_flags(&adapter->lock, flags);
-#define	SUME_UNLOCK(adapter, flags)	\
-    mtx_unlock_flags(&adapter->lock, flags);
+#define	SUME_LOCK(adapter)	\
+    mtx_lock(&adapter->lock);
+#define	SUME_UNLOCK(adapter)	\
+    mtx_unlock(&adapter->lock);
 
 /* Currently SUME only uses two fixed channels for all port traffic and regs. */
 #define	SUME_RIFFA_CHANNEL_DATA		0

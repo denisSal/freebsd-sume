@@ -291,14 +291,13 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	int error, i, last, offset;
 	device_t dev;
 	struct metadata *mdata;
-	int flags = MTX_RECURSE;
 
 	nf_priv = ifp->if_softc;
 	adapter = nf_priv->adapter;
 	i = nf_priv->riffa_channel;
 	dev = adapter->dev;
 
-	SUME_LOCK(adapter, flags);
+	SUME_LOCK(adapter);
 
 	p8 = (uint8_t *) adapter->send[i]->buf_addr + 3 * sizeof(uint32_t);
 	mdata = (struct metadata *) p8;
@@ -306,7 +305,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	 * Check state. It's the best we can do for now.
 	 */
 	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
-		SUME_UNLOCK(adapter, flags);
+		SUME_UNLOCK(adapter);
 		m_freem(m);
 		return (ENETDOWN);
 	}
@@ -315,7 +314,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 
 	/* Make sure we fit with the 16 bytes metadata. */
 	if ((m->m_len + 16) > adapter->sg_buf_size) {
-		SUME_UNLOCK(adapter, flags);
+		SUME_UNLOCK(adapter);
 		device_printf(dev, "%s: Packet too big for bounce buffer "
 		    "(%d)\n", __func__, m->m_len);
 		m_freem(m);
@@ -356,7 +355,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	error = sume_riffa_fill_sg_buf(adapter,
 	    adapter->send[i], SUME_RIFFA_LEN(adapter->send[i]->len));
 	if (error) {
-		SUME_UNLOCK(adapter, flags);
+		SUME_UNLOCK(adapter);
 		device_printf(dev, "%s: failed to map S/G buffer\n", __func__);
 		m_freem(m);
 		return (ENETDOWN);
@@ -378,7 +377,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
-	SUME_UNLOCK(adapter, flags);
+	SUME_UNLOCK(adapter);
 
 	/* We can free as long as we use the bounce buffer. */
 	m_freem(m);
@@ -428,9 +427,8 @@ sume_intr_handler(void *arg)
 	uint32_t vect, vect0, vect1, len;
 	int i, error, loops;
 	device_t dev = adapter->dev;
-	int flags = MTX_RECURSE;
 
-	SUME_LOCK(adapter, flags);
+	SUME_LOCK(adapter);
 	vect0 = adapter->vect0;
 	vect1 = adapter->vect1;
 
@@ -692,7 +690,7 @@ sume_intr_handler(void *arg)
 			    "%d\n", __func__, vect, adapter->recv[i]->state,
 			    loops);
 	}
-	SUME_UNLOCK(adapter, flags);
+	SUME_UNLOCK(adapter);
 }
 
 /* Filtering interrupts. We wait for the adapter to go into the 'running' state
@@ -704,7 +702,6 @@ sume_intr_filter(void *arg)
 {
 	struct sume_adapter *adapter = arg;
 	uint32_t vect0, vect1;
-	int flags = MTX_RECURSE;
 
 	/*
 	 * Ignore early interrupts from RIFFA given we cannot disable interrupt
@@ -714,7 +711,7 @@ sume_intr_filter(void *arg)
 		return (FILTER_STRAY);
 
 	/* XXX-BZ We would turn interrupt generation off. */
-	SUME_LOCK(adapter, flags);
+	SUME_LOCK(adapter);
 
 	vect0 = read_reg(adapter, RIFFA_IRQ_REG0_OFF);
 	if((vect0 & 0xC0000000) != 0) {
@@ -731,7 +728,7 @@ sume_intr_filter(void *arg)
 	/* XXX-BZ We would turn interrupt generation back on. */
 	adapter->vect0 = vect0;
 	adapter->vect1 = vect1;
-	SUME_UNLOCK(adapter, flags);
+	SUME_UNLOCK(adapter);
 
 	return (FILTER_SCHEDULE_THREAD);
 }
@@ -1091,7 +1088,6 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 	struct sume_ifreq sifr;
 	int error = 0;
 	struct sume_adapter *adapter;
-	int flags = MTX_RECURSE;
 
 	nf_priv = ifp->if_softc;
 	if (nf_priv == NULL || nf_priv->adapter == NULL)
@@ -1103,21 +1099,21 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 	case SIOCSIFFLAGS:
 		if (atomic_load_int(&adapter->running) == 0)
 			break;
-		SUME_LOCK(adapter, flags);
+		SUME_LOCK(adapter);
 		if (ifp->if_flags & IFF_UP) {
 			if (ifp->if_drv_flags & IFF_DRV_RUNNING)
 				sume_if_up(ifp);
 		} else if (ifp->if_drv_flags & IFF_DRV_RUNNING)
 			sume_if_down(ifp);
-		SUME_UNLOCK(adapter, flags);
+		SUME_UNLOCK(adapter);
 		break;
 
 	case SIOCGIFXMEDIA:
 		if (atomic_load_int(&adapter->running) == 0)
 			break;
-		SUME_LOCK(adapter, flags);
+		SUME_LOCK(adapter);
 		ifmedia_ioctl(ifp, ifr, &nf_priv->media, cmd);
-		SUME_UNLOCK(adapter, flags);
+		SUME_UNLOCK(adapter);
 		break;
 
 	case SIOCSIFADDR:
