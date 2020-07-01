@@ -306,7 +306,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	 */
 	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
 		device_printf(dev, "%s: SUME not in IDLE state (state %d)\n",
-		    __func__, m->m_len);
+		    __func__, adapter->send[i]->state);
 		SUME_UNLOCK(adapter);
 		m_freem(m);
 		return (EBUSY);
