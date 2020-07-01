@@ -305,9 +305,11 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	 * Check state. It's the best we can do for now.
 	 */
 	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
+		device_printf(dev, "%s: SUME not in IDLE state (state %d)\n",
+		    __func__, m->m_len);
 		SUME_UNLOCK(adapter);
 		m_freem(m);
-		return (ENETDOWN);
+		return (EBUSY);
 	}
 	/* Clear the recovery flag. */
 	adapter->send[i]->flags &= ~SUME_CHAN_STATE_RECOVERY_FLAG;
@@ -1185,8 +1187,8 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 static void
 sume_if_start(struct ifnet *ifp)
 {
-	struct nf_priv	*nf_priv = ifp->if_softc;
-	struct mbuf		*m_head;
+	struct nf_priv *nf_priv = ifp->if_softc;
+	struct mbuf *m_head;
 
 	if ((ifp->if_drv_flags & (IFF_DRV_RUNNING|IFF_DRV_OACTIVE)) !=
 	    IFF_DRV_RUNNING)
@@ -1194,10 +1196,10 @@ sume_if_start(struct ifnet *ifp)
 	if (!nf_priv->port_up)
 		return;
 
-	while (!IFQ_DRV_IS_EMPTY(&ifp->if_snd)) {
+	if (!IFQ_DRV_IS_EMPTY(&ifp->if_snd)) {
 		IFQ_DRV_DEQUEUE(&ifp->if_snd, m_head);
 		if (m_head == NULL)
-			break;
+			return;
 		/*
 		*  Encapsulation can modify our pointer, and or make it
 		*  NULL on failure.  In that event, we can't requeue.
@@ -1205,7 +1207,7 @@ sume_if_start(struct ifnet *ifp)
 		if (sume_start_xmit(ifp, m_head)) {
 			if (m_head != NULL)
 				IFQ_DRV_PREPEND(&ifp->if_snd, m_head);
-			break;
+			return;
 		}
 	}
 }
