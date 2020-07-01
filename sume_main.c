@@ -429,8 +429,18 @@ sume_intr_handler(void *arg)
 	device_t dev = adapter->dev;
 
 	SUME_LOCK(adapter);
-	vect0 = adapter->vect0;
-	vect1 = adapter->vect1;
+
+	vect0 = read_reg(adapter, RIFFA_IRQ_REG0_OFF);
+	if((vect0 & 0xC0000000) != 0) {
+		return;
+	}
+	if (adapter->num_chnls > 6) {
+		vect1 = read_reg(adapter, RIFFA_IRQ_REG1_OFF);
+		if((vect1 & 0xC0000000) != 0) {
+			return;
+		}
+	} else
+		vect1 = 0;
 
 	/*
 	 * We only have one interrupt for all channels and no way
@@ -701,7 +711,6 @@ static int
 sume_intr_filter(void *arg)
 {
 	struct sume_adapter *adapter = arg;
-	uint32_t vect0, vect1;
 
 	/*
 	 * Ignore early interrupts from RIFFA given we cannot disable interrupt
@@ -709,26 +718,6 @@ sume_intr_filter(void *arg)
 	 */
 	if (atomic_load_int(&adapter->running) == 0)
 		return (FILTER_STRAY);
-
-	/* XXX-BZ We would turn interrupt generation off. */
-	SUME_LOCK(adapter);
-
-	vect0 = read_reg(adapter, RIFFA_IRQ_REG0_OFF);
-	if((vect0 & 0xC0000000) != 0) {
-		return (FILTER_STRAY);
-	}
-	if (adapter->num_chnls > 6) {
-		vect1 = read_reg(adapter, RIFFA_IRQ_REG1_OFF);
-		if((vect1 & 0xC0000000) != 0) {
-			return (FILTER_STRAY);
-		}
-	} else
-		vect1 = 0;
-
-	/* XXX-BZ We would turn interrupt generation back on. */
-	adapter->vect0 = vect0;
-	adapter->vect1 = vect1;
-	SUME_UNLOCK(adapter);
 
 	return (FILTER_SCHEDULE_THREAD);
 }

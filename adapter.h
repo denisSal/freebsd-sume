@@ -155,9 +155,6 @@ struct sume_adapter {
 
 	struct riffa_chnl_dir	**recv;
 	struct riffa_chnl_dir	**send;
-
-	uint32_t		vect0;
-	uint32_t		vect1;
 };
 
 struct metadata {
