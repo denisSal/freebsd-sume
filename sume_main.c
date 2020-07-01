@@ -1475,6 +1475,7 @@ sume_detach(device_t dev)
 	sume_remove_riffa_buffers(adapter);
 
 	for (i = 0; i < sume_nports; i++) {
+		// XXX not really safe, fix this
 		nf_priv = adapter->ifp[i]->if_softc;
 		if (nf_priv->port_up)
 			if_down(adapter->ifp[i]);
@@ -1482,6 +1483,7 @@ sume_detach(device_t dev)
 		if (adapter->ifp[i] != NULL) {
 			ether_ifdetach(adapter->ifp[i]);
 		}
+		free(nf_priv, M_SUME);
 	}
 
 	mtx_destroy(&adapter->lock);
