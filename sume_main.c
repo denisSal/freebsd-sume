@@ -1200,13 +1200,13 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 static void
 sume_if_start(struct ifnet *ifp)
 {
-	struct nf_priv	*port = ifp->if_softc;
+	struct nf_priv	*nf_priv = ifp->if_softc;
 	struct mbuf		*m_head;
 
 	if ((ifp->if_drv_flags & (IFF_DRV_RUNNING|IFF_DRV_OACTIVE)) !=
 	    IFF_DRV_RUNNING)
 		return;
-	if (!port->port_up)
+	if (!nf_priv->port_up)
 		return;
 
 	while (!IFQ_DRV_IS_EMPTY(&ifp->if_snd)) {
@@ -1236,7 +1236,8 @@ static int
 sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 {
 	struct ifnet *ifp;	
-	struct nf_priv *nf_priv = &adapter->port[port];
+	struct nf_priv *nf_priv = malloc(sizeof(struct nf_priv), M_SUME,
+	    M_ZERO | M_WAITOK);
 	device_t dev = adapter->dev;
 
 	ifp = if_alloc(IFT_ETHER);
@@ -1260,8 +1261,6 @@ sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 	nf_priv->ifp = ifp;
 	nf_priv->port = port;
 	nf_priv->riffa_channel = SUME_RIFFA_CHANNEL_DATA;
-
-	adapter->ifp[port] = ifp;
 
 	uint8_t hw_addr[ETHER_ADDR_LEN] = DEFAULT_ETHER_ADDRESS;
 	hw_addr[ETHER_ADDR_LEN-1] = port;
@@ -1475,13 +1474,15 @@ sume_detach(device_t dev)
 {
 	struct sume_adapter *adapter = device_get_softc(dev);
 	int rc, i;
+	struct nf_priv *nf_priv;
 
 	sume_remove_riffa_buffers(adapter);
 
 	for (i = 0; i < sume_nports; i++) {
-		if (adapter->port[i].port_up)
+		nf_priv = adapter->ifp[i]->if_softc;
+		if (nf_priv->port_up)
 			if_down(adapter->ifp[i]);
-		ifmedia_removeall(&adapter->port[i].media);
+		ifmedia_removeall(&nf_priv->media);
 		if (adapter->ifp[i] != NULL) {
 			ether_ifdetach(adapter->ifp[i]);
 		}

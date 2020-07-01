@@ -151,7 +151,6 @@ struct sume_adapter {
 	uint32_t		sg_buf_size;
 	volatile int		running;
 	struct ifnet		*ifp[4];
-	struct nf_priv		port[4];
 	struct mtx		lock;
 
 	struct riffa_chnl_dir	**recv;
