@@ -174,3 +174,9 @@ struct nf_regop_data {
 	uint32_t		rtag;
 	uint32_t		strb;
 };
+
+struct nf_bb_desc {
+	uint32_t		lower;
+	uint32_t		upper;
+	uint32_t		len;
+};

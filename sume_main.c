@@ -140,7 +140,7 @@ static int mod_event(module_t, int, void *);
 void sume_intr_handler(void *);
 static int sume_intr_filter(void *);
 static int sume_if_ioctl(struct ifnet *, unsigned long, caddr_t);
-static int sume_riffa_fill_sg_buf(struct sume_adapter *,
+static int sume_fill_bb_desc(struct sume_adapter *,
     struct riffa_chnl_dir *, uint64_t);
 static void check_queues(struct sume_adapter *);
 static inline uint32_t read_reg(struct sume_adapter *, int);
@@ -206,8 +206,8 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	int np;
 	uint32_t t1, t2;
 	uint16_t sport, dport, dp, plen, magic;
-	uint8_t *indata = (uint8_t *) adapter->recv[i]->buf_addr + 3 *
-	    sizeof(uint32_t); // struct descriptor
+	uint8_t *indata = (uint8_t *) adapter->recv[i]->buf_addr + sizeof(struct
+		nf_bb_desc);
 	device_t dev = adapter->dev;
 	struct nf_metadata *mdata = (struct nf_metadata *) indata;
 
@@ -302,9 +302,12 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	printf("Sending %d bytes to nf%d\n", m->m_pkthdr.len, nf_priv->port);
 #endif
 
+	/* Small packets need to be padded and their len expanded? */
+
 	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
 
-	outbuf = (uint8_t *) adapter->send[i]->buf_addr + 3 * sizeof(uint32_t);
+	outbuf = (uint8_t *) adapter->send[i]->buf_addr + sizeof(struct
+		nf_bb_desc);
 	mdata = (struct nf_metadata *) outbuf;
 	/*
 	 * Check state. It's the best we can do for now.
@@ -355,7 +358,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	    adapter->send[i]->len);		/* words */
 
 	/* Fill the S/G map. */
-	error = sume_riffa_fill_sg_buf(adapter,
+	error = sume_fill_bb_desc(adapter,
 	    adapter->send[i], SUME_RIFFA_LEN(adapter->send[i]->len));
 	if (error) {
 		device_printf(dev, "%s: failed to map S/G buffer\n", __func__);
@@ -580,7 +583,7 @@ sume_intr_handler(void *arg)
 					}
 
 					/* Build and load S/G map. */
-					error = sume_riffa_fill_sg_buf(adapter,
+					error = sume_fill_bb_desc(adapter,
 					    adapter->recv[i], SUME_RIFFA_LEN(
 					    adapter->recv[i]->len));
 					if (error != 0) {
@@ -875,16 +878,16 @@ sume_if_up(void *arg)
 
 /* Helper functions. */
 static int
-sume_riffa_fill_sg_buf(struct sume_adapter *adapter, struct riffa_chnl_dir *p,
+sume_fill_bb_desc(struct sume_adapter *adapter, struct riffa_chnl_dir *p,
     uint64_t len)
 {
-	uint32_t *sgtablep;
+	uint32_t *bouncebuf;
 
-	sgtablep = (uint32_t *) p->buf_addr;
+	bouncebuf = (uint32_t *) p->buf_addr;
 
-	sgtablep[0] = (p->buf_hw_addr + 3 * sizeof(uint32_t));
-	sgtablep[1] = (p->buf_hw_addr + 3 * sizeof(uint32_t)) >> 32;
-	sgtablep[2] = len;
+	bouncebuf[0] = (p->buf_hw_addr + sizeof(struct nf_bb_desc));
+	bouncebuf[1] = (p->buf_hw_addr + sizeof(struct nf_bb_desc)) >> 32;
+	bouncebuf[2] = len >> 2;
 
 	p->num_sg = 1;
 
@@ -907,7 +910,7 @@ sume_reg_wr_locked(struct sume_adapter *adapter, int i)
 	    adapter->send[i]->len);	/* words */
 
 	/* Fill the S/G map. */
-	error = sume_riffa_fill_sg_buf(adapter, adapter->send[i],
+	error = sume_fill_bb_desc(adapter, adapter->send[i],
 	    SUME_RIFFA_LEN(adapter->send[i]->len));
 	if (error != 0) {
 		device_printf(dev, "%s: failed to map S/G buffer\n", __func__);
@@ -963,8 +966,8 @@ sume_initiate_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 		return (EBUSY);
 	}
 
-	data = (struct nf_regop_data *) (adapter->send[i]->buf_addr + 3 *
-	    sizeof(uint32_t));
+	data = (struct nf_regop_data *) (adapter->send[i]->buf_addr +
+		sizeof(struct nf_bb_desc));
 	data->addr = htole32(sifr->addr);
 	data->val = htole32(sifr->val);
 	/* Tag to indentify request. */
@@ -1053,8 +1056,8 @@ sume_read_reg_result(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	 * Note: we do access the send side without lock but the state
 	 * machine does prevent the data from changing.
 	 */
-	data = (struct nf_regop_data *) (adapter->recv[i]->buf_addr + 3 *
-	    sizeof(uint32_t));
+	data = (struct nf_regop_data *) (adapter->recv[i]->buf_addr +
+		sizeof(struct nf_bb_desc));
 	if (le32toh(data->rtag) != adapter->send[i]->rtag) {
 		device_printf(dev, "%s: rtag error: 0x%08x 0x%08x\n", __func__,
 		    le32toh(data->rtag), adapter->send[i]->rtag);
