@@ -434,11 +434,13 @@ sume_intr_handler(void *arg)
 
 	vect0 = read_reg(adapter, RIFFA_IRQ_REG0_OFF);
 	if((vect0 & 0xC0000000) != 0) {
+		SUME_UNLOCK(adapter);
 		return;
 	}
 	if (adapter->num_chnls > 6) {
 		vect1 = read_reg(adapter, RIFFA_IRQ_REG1_OFF);
 		if((vect1 & 0xC0000000) != 0) {
+			SUME_UNLOCK(adapter);
 			return;
 		}
 	} else
