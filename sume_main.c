@@ -142,6 +142,7 @@ static int sume_intr_filter(void *);
 static int sume_if_ioctl(struct ifnet *, unsigned long, caddr_t);
 static int sume_riffa_fill_sg_buf(struct sume_adapter *,
     struct riffa_chnl_dir *, uint64_t);
+static void check_queues(struct sume_adapter *);
 static inline uint32_t read_reg(struct sume_adapter *, int);
 static inline void write_reg(struct sume_adapter *, int, uint32_t);
 
@@ -205,10 +206,10 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	int np;
 	uint32_t t1, t2;
 	uint16_t sport, dport, dp, plen, magic;
-	uint8_t *p8 = (uint8_t *) adapter->recv[i]->buf_addr + 3 *
+	uint8_t *indata = (uint8_t *) adapter->recv[i]->buf_addr + 3 *
 	    sizeof(uint32_t); // struct descriptor
 	device_t dev = adapter->dev;
-	struct metadata *mdata = (struct metadata *) p8;
+	struct metadata *mdata = (struct metadata *) indata;
 
 	int sume_16boff = 0;
 
@@ -266,7 +267,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	}
 
 	/* Copy the data in at the right offset. */
-	m_copyback(m, 0, plen, (void *) (p8 + 16));
+	m_copyback(m, 0, plen, (void *) (indata + 16));
 	m->m_pkthdr.rcvif = ifp;
 
 	(*ifp->if_input)(ifp, m);
@@ -287,7 +288,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 {
 	struct sume_adapter *adapter;
 	struct nf_priv *nf_priv;
-	uint8_t *p8; // change p8 to something better
+	uint8_t *outbuf;
 	int error, i, last, offset;
 	device_t dev;
 	struct metadata *mdata;
@@ -297,50 +298,49 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	i = nf_priv->riffa_channel;
 	dev = adapter->dev;
 
-	SUME_LOCK(adapter);
+#ifdef DEBUG
+	printf("Sending %d bytes to nf%d\n", m->m_pkthdr.len, nf_priv->port);
+#endif
 
-	p8 = (uint8_t *) adapter->send[i]->buf_addr + 3 * sizeof(uint32_t);
-	mdata = (struct metadata *) p8;
+	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
+
+	outbuf = (uint8_t *) adapter->send[i]->buf_addr + 3 * sizeof(uint32_t);
+	mdata = (struct metadata *) outbuf;
 	/*
 	 * Check state. It's the best we can do for now.
 	 */
 	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
 		device_printf(dev, "%s: SUME not in IDLE state (state %d)\n",
 		    __func__, adapter->send[i]->state);
-		SUME_UNLOCK(adapter);
-		m_freem(m);
+		//m_freem(m);
 		return (EBUSY);
 	}
 	/* Clear the recovery flag. */
 	adapter->send[i]->flags &= ~SUME_CHAN_STATE_RECOVERY_FLAG;
 
 	/* Make sure we fit with the 16 bytes metadata. */
-	if ((m->m_len + 16) > adapter->sg_buf_size) {
-		SUME_UNLOCK(adapter);
+	if ((m->m_pkthdr.len + 16) > adapter->sg_buf_size) {
 		device_printf(dev, "%s: Packet too big for bounce buffer "
-		    "(%d)\n", __func__, m->m_len);
+		    "(%d)\n", __func__, m->m_pkthdr.len);
 		m_freem(m);
 		return (ENOMEM);
 	}
 
-#ifdef DEBUG
-	printf("Trying to send %d bytes to nf%d\n", m->m_len, nf_priv->port);
-#endif
 	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 	/* Skip the first 4 * sizeof(uint32_t) bytes for the metadata. */
-	memcpy(p8 + 4 * sizeof(uint32_t), m->m_data, m->m_len);
+	m_copydata(m, 0, m->m_pkthdr.len, outbuf + sizeof(struct metadata));
 	adapter->send[i]->len = 4;		/* words */
-	adapter->send[i]->len += (m->m_len / 4) +
-	    ((m->m_len % 4 == 0) ? 0 : 1);
+	adapter->send[i]->len += (m->m_pkthdr.len / 4) +
+	    ((m->m_pkthdr.len % 4 == 0) ? 0 : 1);
 
 	/* Fill in the metadata. */
 	mdata->sport = htole16(
 	    1 << (nf_priv->port * 2 + 1)); /* CPU(DMA) ports are odd. */
 	mdata->dport = htole16(
 	    1 << (nf_priv->port * 2)); /* MAC ports are even. */
-	mdata->plen = htole16(m->m_len);
+	mdata->plen = htole16(m->m_pkthdr.len);
 	mdata->magic = htole16(SUME_RIFFA_MAGIC);
 	mdata->t1 = htole32(0);
 	mdata->t2 = htole32(0);
@@ -357,10 +357,8 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	error = sume_riffa_fill_sg_buf(adapter,
 	    adapter->send[i], SUME_RIFFA_LEN(adapter->send[i]->len));
 	if (error) {
-		SUME_UNLOCK(adapter);
 		device_printf(dev, "%s: failed to map S/G buffer\n", __func__);
-		m_freem(m);
-		return (ENETDOWN);
+		return (ENOMEM);
 	}
 
 	/* Update the state before intiating the DMA to avoid races. */
@@ -378,8 +376,6 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 
 	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
-
-	SUME_UNLOCK(adapter);
 
 	/* We can free as long as we use the bounce buffer. */
 	m_freem(m);
@@ -488,10 +484,11 @@ sume_intr_handler(void *arg)
 					len = read_reg(adapter,
 					    RIFFA_CHNL_REG(i,
 					    RIFFA_RX_TNFR_LEN_REG_OFF));
-					if (i == SUME_RIFFA_CHANNEL_DATA)
+					if (i == SUME_RIFFA_CHANNEL_DATA) {
 						adapter->send[i]->state =
 						    SUME_RIFFA_CHAN_STATE_IDLE;
-					else if (i == SUME_RIFFA_CHANNEL_REG) {
+						check_queues(adapter);
+					} else if (i == SUME_RIFFA_CHANNEL_REG) {
 						wakeup(&adapter->send[i]->event);
 						printf("Wake up send "
 						    "thread!\n");
@@ -1184,11 +1181,38 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 	return;
 }
 
+static int
+sume_if_start_locked(struct ifnet *ifp)
+{
+	struct mbuf *m_head;
+	struct nf_priv *nf_priv = ifp->if_softc;
+	struct sume_adapter *adapter = nf_priv->adapter;
+
+	if (!IFQ_DRV_IS_EMPTY(&ifp->if_snd)) {
+		IFQ_DRV_DEQUEUE(&ifp->if_snd, m_head);
+		if (m_head == NULL)
+			return (1);
+		/*
+		*  Failed xmit means we need to try again later so requeue
+		*/
+		if (sume_start_xmit(ifp, m_head)) {
+			if (m_head != NULL)
+				IFQ_DRV_PREPEND(&ifp->if_snd, m_head);
+		}
+
+		adapter->last_ifc = nf_priv->port;
+		return (0);
+	}
+
+	return (1);
+}
+
 static void
 sume_if_start(struct ifnet *ifp)
 {
 	struct nf_priv *nf_priv = ifp->if_softc;
-	struct mbuf *m_head;
+	struct sume_adapter *adapter = nf_priv->adapter;
+	int i = nf_priv->riffa_channel;
 
 	if ((ifp->if_drv_flags & (IFF_DRV_RUNNING|IFF_DRV_OACTIVE)) !=
 	    IFF_DRV_RUNNING)
@@ -1196,20 +1220,31 @@ sume_if_start(struct ifnet *ifp)
 	if (!nf_priv->port_up)
 		return;
 
-	if (!IFQ_DRV_IS_EMPTY(&ifp->if_snd)) {
-		IFQ_DRV_DEQUEUE(&ifp->if_snd, m_head);
-		if (m_head == NULL)
-			return;
-		/*
-		*  Encapsulation can modify our pointer, and or make it
-		*  NULL on failure.  In that event, we can't requeue.
-		*/
-		if (sume_start_xmit(ifp, m_head)) {
-			if (m_head != NULL)
-				IFQ_DRV_PREPEND(&ifp->if_snd, m_head);
-			return;
-		}
+	SUME_LOCK(adapter);
+	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
+		//device_printf(adapter->dev, "%s: SUME not in IDLE state "
+			//"(state %d)\n", __func__, adapter->send[i]->state);
+		SUME_UNLOCK(adapter);
+		return;
 	}
+
+	sume_if_start_locked(ifp);
+	SUME_UNLOCK(adapter);
+}
+
+static void
+check_queues(struct sume_adapter *adapter)
+{
+	int i, last;
+
+	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
+
+	last = adapter->last_ifc;
+
+	/* Check all interfaces */
+	for (i = last+1; i < last + sume_nports + 1; i++)
+		if (!sume_if_start_locked(adapter->ifp[i % sume_nports]))
+			break;
 }
 
 static void
