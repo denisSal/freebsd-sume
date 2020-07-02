@@ -209,12 +209,12 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	uint8_t *indata = (uint8_t *) adapter->recv[i]->buf_addr + 3 *
 	    sizeof(uint32_t); // struct descriptor
 	device_t dev = adapter->dev;
-	struct metadata *mdata = (struct metadata *) indata;
+	struct nf_metadata *mdata = (struct nf_metadata *) indata;
 
 	int sume_16boff = 0;
 
 	/* The metadata header is 16 bytes. */
-	if (len < 16) {
+	if (len < sizeof(struct nf_metadata)) {
 		device_printf(dev, "%s: short frame (%d)\n",
 		    __func__, len);
 		return (EINVAL);
@@ -291,7 +291,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	uint8_t *outbuf;
 	int error, i, last, offset;
 	device_t dev;
-	struct metadata *mdata;
+	struct nf_metadata *mdata;
 
 	nf_priv = ifp->if_softc;
 	adapter = nf_priv->adapter;
@@ -305,7 +305,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
 
 	outbuf = (uint8_t *) adapter->send[i]->buf_addr + 3 * sizeof(uint32_t);
-	mdata = (struct metadata *) outbuf;
+	mdata = (struct nf_metadata *) outbuf;
 	/*
 	 * Check state. It's the best we can do for now.
 	 */
@@ -318,8 +318,9 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	/* Clear the recovery flag. */
 	adapter->send[i]->flags &= ~SUME_CHAN_STATE_RECOVERY_FLAG;
 
-	/* Make sure we fit with the 16 bytes metadata. */
-	if ((m->m_pkthdr.len + 16) > adapter->sg_buf_size) {
+	/* Make sure we fit with the 16 bytes nf_metadata. */
+	if ((m->m_pkthdr.len + sizeof(struct nf_metadata)) >
+	    adapter->sg_buf_size) {
 		device_printf(dev, "%s: Packet too big for bounce buffer "
 		    "(%d)\n", __func__, m->m_pkthdr.len);
 		m_freem(m);
@@ -329,9 +330,9 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
-	/* Skip the first 4 * sizeof(uint32_t) bytes for the metadata. */
-	m_copydata(m, 0, m->m_pkthdr.len, outbuf + sizeof(struct metadata));
-	adapter->send[i]->len = 4;		/* words */
+	/* Skip the first 16 bytes for the metadata. */
+	m_copydata(m, 0, m->m_pkthdr.len, outbuf + sizeof(struct nf_metadata));
+	adapter->send[i]->len = sizeof(struct nf_metadata) / 4;	/* words */
 	adapter->send[i]->len += (m->m_pkthdr.len / 4) +
 	    ((m->m_pkthdr.len % 4 == 0) ? 0 : 1);
 
@@ -942,7 +943,7 @@ sume_initiate_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
     uint32_t strb)
 {
 	struct sume_adapter *adapter;
-	struct regop_data *data;
+	struct nf_regop_data *data;
 	int error = 0, i;
 
 	adapter = nf_priv->adapter;
@@ -962,7 +963,7 @@ sume_initiate_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 		return (EBUSY);
 	}
 
-	data = (struct regop_data *) (adapter->send[i]->buf_addr + 3 *
+	data = (struct nf_regop_data *) (adapter->send[i]->buf_addr + 3 *
 	    sizeof(uint32_t));
 	data->addr = htole32(sifr->addr);
 	data->val = htole32(sifr->val);
@@ -1015,7 +1016,7 @@ static int
 sume_read_reg_result(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 {
 	struct sume_adapter *adapter;
-	struct regop_data *data;
+	struct nf_regop_data *data;
 	int error, i;
 	device_t dev;
 
@@ -1052,7 +1053,7 @@ sume_read_reg_result(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	 * Note: we do access the send side without lock but the state
 	 * machine does prevent the data from changing.
 	 */
-	data = (struct regop_data *) (adapter->recv[i]->buf_addr + 3 *
+	data = (struct nf_regop_data *) (adapter->recv[i]->buf_addr + 3 *
 	    sizeof(uint32_t));
 	if (le32toh(data->rtag) != adapter->send[i]->rtag) {
 		device_printf(dev, "%s: rtag error: 0x%08x 0x%08x\n", __func__,

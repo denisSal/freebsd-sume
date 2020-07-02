@@ -159,7 +159,7 @@ struct sume_adapter {
 	uint32_t		last_ifc;
 };
 
-struct metadata {
+struct nf_metadata {
 	uint16_t		sport;
 	uint16_t		dport;
 	uint16_t		plen;
@@ -168,7 +168,7 @@ struct metadata {
 	uint32_t		t2;
 };
 
-struct regop_data {
+struct nf_regop_data {
 	uint32_t		addr;
 	uint32_t		val;
 	uint32_t		rtag;
