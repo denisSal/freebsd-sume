@@ -135,7 +135,6 @@ struct nf_priv {
 	struct ifnet		*ifp;
 	uint32_t		port;
 	uint32_t		port_up;
-	uint32_t		msg_enable;
 	uint32_t		riffa_channel;
 	struct ifmedia		media;
 };
@@ -161,6 +160,16 @@ struct sume_adapter {
 	uint32_t		last_ifc;
 };
 
+/* SUME metadata:
+ * sport - not used for RX. For TX, set to 0x02, 0x08, 0x20, 0x80, depending on
+ *     the sending interface (nf0, nf1, nf2 or nf3).
+ * dport - For RX, is set to 0x02, 0x08, 0x20, 0x80, depending on the receiving
+ *     interface (nf0, nf1, nf2 or nf3). For TX, set to 0x01, 0x04, 0x10, 0x40,
+ *     depending on the sending HW interface (nf0, nf1, nf2 or nf3).
+ * plen - length of the send/receive packet data (in bytes)
+ * magic - SUME hardcoded magic number which should be 0xcafe
+ * t1, t1 - could be used for timestamping by SUME
+ */
 struct nf_metadata {
 	uint16_t		sport;
 	uint16_t		dport;
@@ -170,6 +179,13 @@ struct nf_metadata {
 	uint32_t		t2;
 };
 
+/* Used for ioctl communication with the rwaxi program used to read/write SUME
+ *    internally defined register data.
+ * addr - address of the SUME module register to read/write
+ * val - value to write/read to/from the register
+ * rtag - returned on read: transaction tag, for syncronization
+ * strb - 0x1f when writing, 0x00 for reading
+ */
 struct nf_regop_data {
 	uint32_t		addr;
 	uint32_t		val;
@@ -177,6 +193,10 @@ struct nf_regop_data {
 	uint32_t		strb;
 };
 
+/* Our bouncebuffer "descriptor". This holds our physical address (lower and
+ * upper values) of the beginning of the DMA data to RX/TX. The len is number
+ * of words to transmit.
+ */
 struct nf_bb_desc {
 	uint32_t		lower;
 	uint32_t		upper;
