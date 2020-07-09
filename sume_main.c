@@ -52,6 +52,10 @@
 #include <machine/atomic.h>
 
 #include <net/if_media.h>
+#include <netinet/in.h>
+#include <netinet/in_var.h>
+#include <netinet/if_ether.h>
+
 #include "adapter.h"
 
 #define	PCI_VENDOR_ID_XILINX 0x10ee
@@ -146,7 +150,7 @@ static void check_queues(struct sume_adapter *);
 static inline uint32_t read_reg(struct sume_adapter *, int);
 static inline void write_reg(struct sume_adapter *, int, uint32_t);
 
-#define	DEBUG // replace with sysctl variable
+//#define	DEBUG // replace with sysctl variable
 
 struct {
 	uint16_t device;
@@ -1079,6 +1083,7 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 {
 	struct nf_priv *nf_priv;
 	struct ifreq *ifr = (struct ifreq *) data;
+	struct ifaddr *ifa = (struct ifaddr *) data;
 	struct sume_ifreq sifr;
 	int error = 0;
 	struct sume_adapter *adapter;
@@ -1114,6 +1119,13 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 	case SIOCAIFADDR:
 		if (atomic_load_int(&adapter->running) == 0)
 			break;
+		SUME_LOCK(adapter);
+		if (!nf_priv->port_up) {
+			ifp->if_flags |= IFF_UP;
+			nf_priv->port_up = 1;
+		}
+		SUME_UNLOCK(adapter);
+		arp_ifinit(ifp, ifa);
 		break;
 
 	case SUME_IOCTL_CMD_WRITE_REG:
