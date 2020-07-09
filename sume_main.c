@@ -208,14 +208,11 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	struct ifnet *ifp;
 	struct nf_priv *nf_priv;
 	int np;
-	uint32_t t1, t2;
 	uint16_t sport, dport, dp, plen, magic;
 	uint8_t *indata = (uint8_t *) adapter->recv[i]->buf_addr + sizeof(struct
 		nf_bb_desc);
 	device_t dev = adapter->dev;
 	struct nf_metadata *mdata = (struct nf_metadata *) indata;
-
-	int sume_16boff = 0;
 
 	/* The metadata header is 16 bytes. */
 	if (len < sizeof(struct nf_metadata)) {
@@ -229,15 +226,11 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	plen = le16toh(mdata->plen);
 	magic = le16toh(mdata->magic);
 
-	t1 = le32toh(mdata->t1);
-	t2 = le32toh(mdata->t2);
-
-	if ((16 + sume_16boff * sizeof(uint16_t) + plen) > len ||
-		magic != SUME_RIFFA_MAGIC) {
-		device_printf(dev, "%s: corrupted packet (16 + %zd + %d > %d "
-		    "|| magic 0x%04x != 0x%04x)\n", __func__,
-		    sume_16boff * sizeof(uint16_t), plen, len, magic,
-		    SUME_RIFFA_MAGIC);
+	if ((sizeof(struct nf_metadata) + plen) > len ||
+	    magic != SUME_RIFFA_MAGIC) {
+		device_printf(dev, "%s: corrupted packet (%zd + %d > %d "
+		    "|| magic 0x%04x != 0x%04x)\n", __func__, sizeof(struct
+		    nf_metadata), plen, len, magic, SUME_RIFFA_MAGIC);
 		return(ENOMEM);
 	}
 
@@ -271,7 +264,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	}
 
 	/* Copy the data in at the right offset. */
-	m_copyback(m, 0, plen, (void *) (indata + 16));
+	m_copyback(m, 0, plen, (void *) (indata + sizeof(struct nf_metadata)));
 	m->m_pkthdr.rcvif = ifp;
 
 	(*ifp->if_input)(ifp, m);
