@@ -246,7 +246,9 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	/* If the interface is down, well, we are done. */
 	nf_priv = ifp->if_softc;
 	if (nf_priv->port_up == 0) {
-		device_printf(dev, "Device not up.\n");
+#ifdef DEBUG
+		device_printf(dev, "Device nf%d not up.\n", np);
+#endif
 		return (ENETDOWN);
 	}
 
@@ -842,33 +844,37 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 }
 
 static void
-sume_if_down(void *arg)
+sume_if_down(struct nf_priv *nf_priv)
 {
-	struct ifnet *ifp = arg;
-	struct nf_priv *nf_priv = ifp->if_softc;
 
 	if (!nf_priv->port_up)
 		return; /* already down */
 
-	if_down(ifp);
 	nf_priv->port_up = 0;
 
 	printf("SUME nf%d down.\n", nf_priv->port);
 }
 
 static void
-sume_if_up(void *arg)
+sume_if_init_locked(struct nf_priv *nf_priv)
 {
-	struct ifnet *ifp = arg;
-	struct nf_priv *nf_priv = ifp->if_softc;
 
 	if (nf_priv->port_up)
 		return; /* already up */
 
-	if_up(ifp);
 	nf_priv->port_up = 1;
 
 	printf("SUME nf%d up.\n", nf_priv->port);
+}
+
+static void
+sume_if_init(void *sc)
+{
+	struct nf_priv *nf_priv = sc;
+
+	SUME_LOCK(nf_priv->adapter);
+	sume_if_init_locked(nf_priv);
+	SUME_UNLOCK(nf_priv->adapter);
 }
 
 /* Helper functions. */
@@ -1072,7 +1078,6 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 {
 	struct nf_priv *nf_priv;
 	struct ifreq *ifr = (struct ifreq *) data;
-	struct ifaddr *ifa = (struct ifaddr *) data;
 	struct sume_ifreq sifr;
 	int error = 0;
 	struct sume_adapter *adapter;
@@ -1090,31 +1095,23 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 		SUME_LOCK(adapter);
 		if (ifp->if_flags & IFF_UP) {
 			if (ifp->if_drv_flags & IFF_DRV_RUNNING)
-				sume_if_up(ifp);
+				sume_if_init_locked(nf_priv);
 		} else if (ifp->if_drv_flags & IFF_DRV_RUNNING)
-			sume_if_down(ifp);
+			sume_if_down(nf_priv);
 		SUME_UNLOCK(adapter);
 		break;
 
 	case SIOCGIFXMEDIA:
 		if (atomic_load_int(&adapter->running) == 0)
 			break;
-		SUME_LOCK(adapter);
 		ifmedia_ioctl(ifp, ifr, &nf_priv->media, cmd);
-		SUME_UNLOCK(adapter);
 		break;
 
 	case SIOCSIFADDR:
 	case SIOCAIFADDR:
 		if (atomic_load_int(&adapter->running) == 0)
 			break;
-		SUME_LOCK(adapter);
-		if (!nf_priv->port_up) {
-			ifp->if_flags |= IFF_UP;
-			nf_priv->port_up = 1;
-		}
-		SUME_UNLOCK(adapter);
-		arp_ifinit(ifp, ifa);
+		ether_ioctl(ifp, cmd, data);
 		break;
 
 	case SUME_IOCTL_CMD_WRITE_REG:
@@ -1281,10 +1278,11 @@ sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 	if_initname(ifp, SUME_ETH_DEVICE_NAME, port);
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
 
+	ifp->if_init = sume_if_init;
 	ifp->if_start = sume_if_start;
 	ifp->if_ioctl = sume_if_ioctl;
 	//ifp->if_transmit = sume_start_xmit;
-	ifp->if_qflush = sume_qflush;
+	ifp->if_qflush = sume_qflush; // don't need this anymore?
 
 	nf_priv->adapter = adapter;
 	nf_priv->ifp = ifp;
