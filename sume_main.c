@@ -208,7 +208,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	struct ifnet *ifp;
 	struct nf_priv *nf_priv;
 	int np;
-	uint16_t sport, dport, dp, plen, magic;
+	uint16_t sport, dport, plen, magic;
 	uint8_t *indata = (uint8_t *) adapter->recv[i]->buf_addr + sizeof(struct
 		nf_bb_desc);
 	device_t dev = adapter->dev;
@@ -234,12 +234,8 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 		return(ENOMEM);
 	}
 
-	np = 0;
-	dp = dport & 0xaa;
-	while ((dp & 0x2) == 0) {
-		np++;
-		dp >>= 2;
-	}
+	/* We got the packet from one of the even bits */
+	np = (ffs(dport & SUME_DPORT_MASK) >> 1) - 1;
 	if (np > sume_nports) {
 		device_printf(dev, "%s: invalid destination port 0x%04x"
 		    "(%d)\n", __func__, dport, np);

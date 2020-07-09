@@ -98,6 +98,8 @@
 #define	SUME_MSI_TXBUF			(1 << 3)
 #define	SUME_MSI_TXDONE			(1 << 4)
 
+#define	SUME_DPORT_MASK			0xaa
+
 struct irq {
 	struct resource		*res;
 	uint32_t		rid;
