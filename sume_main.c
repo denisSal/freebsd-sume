@@ -1255,13 +1255,6 @@ check_queues(struct sume_adapter *adapter)
 			break;
 }
 
-static void
-sume_qflush(struct ifnet *ifp)
-{
-
-	// dummy qflush
-}
-
 static int
 sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 {
@@ -1285,8 +1278,6 @@ sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 	ifp->if_init = sume_if_init;
 	ifp->if_start = sume_if_start;
 	ifp->if_ioctl = sume_if_ioctl;
-	//ifp->if_transmit = sume_start_xmit;
-	ifp->if_qflush = sume_qflush; // don't need this anymore?
 
 	nf_priv->adapter = adapter;
 	nf_priv->ifp = ifp;
