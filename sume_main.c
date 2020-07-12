@@ -202,10 +202,9 @@ sume_probe(device_t dev)
  * correct interface to rcvif and send the packet to the OS with if_input.
  */
 static int
-sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
+sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len, struct
+    mbuf **m, struct ifnet **ifp)
 {
-	struct mbuf *m;
-	struct ifnet *ifp;
 	struct nf_priv *nf_priv;
 	int np;
 	uint16_t sport, dport, plen, magic;
@@ -241,31 +240,28 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 		    "(%d)\n", __func__, dport, np);
 		return (EINVAL);
 	}
-	ifp = adapter->ifp[np];
+	*ifp = adapter->ifp[np];
 
 	/* If the interface is down, well, we are done. */
-	nf_priv = ifp->if_softc;
+	nf_priv = (*ifp)->if_softc;
 	if (nf_priv->port_up == 0) {
 #ifdef DEBUG
 		device_printf(dev, "Device nf%d not up.\n", np);
 #endif
+		*ifp = NULL;
 		return (ENETDOWN);
 	}
 
 #ifdef DEBUG
 	printf("Building mbuf with length: %d\n", plen);
 #endif
-	m = m_getm(NULL, plen, M_NOWAIT, MT_DATA);
-	if (m == NULL) {
-		m_freem(m);
+	*m = m_getm(NULL, plen, M_NOWAIT, MT_DATA);
+	if (*m == NULL) {
 		return (ENOMEM);
 	}
 
 	/* Copy the data in at the right offset. */
-	m_copyback(m, 0, plen, (void *) (indata + sizeof(struct nf_metadata)));
-	m->m_pkthdr.rcvif = ifp;
-
-	(*ifp->if_input)(ifp, m);
+	m_copyback(*m, 0, plen, (void *) (indata + sizeof(struct nf_metadata)));
 
 	return (0);
 }
@@ -424,6 +420,8 @@ sume_intr_handler(void *arg)
 	uint32_t vect, vect0, vect1, len;
 	int i, error, loops;
 	device_t dev = adapter->dev;
+	struct mbuf *m = NULL;
+	struct ifnet *ifp = NULL;
 
 	SUME_LOCK(adapter);
 
@@ -653,7 +651,8 @@ sume_intr_handler(void *arg)
 					 */
 					if (i == SUME_RIFFA_CHANNEL_DATA) {
 						error = sume_rx_build_mbuf(
-						    adapter, i, len << 2);
+						    adapter, i, len << 2, &m,
+						    &ifp);
 						adapter->recv[i]->state =
 						    SUME_RIFFA_CHAN_STATE_IDLE;
 					} else if (i ==
@@ -701,6 +700,11 @@ sume_intr_handler(void *arg)
 			    loops);
 	}
 	SUME_UNLOCK(adapter);
+
+	if (ifp != NULL && m != NULL) {
+		m->m_pkthdr.rcvif = ifp;
+		(*ifp->if_input)(ifp, m);
+	}
 }
 
 /* Filtering interrupts. We wait for the adapter to go into the 'running' state
