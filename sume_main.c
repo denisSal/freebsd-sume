@@ -201,11 +201,12 @@ sume_probe(device_t dev)
  * create an mbuf and copy the data to it using m_copyback() function, set the
  * correct interface to rcvif and send the packet to the OS with if_input.
  */
-static int
+static struct mbuf *
 sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len, struct
-    mbuf **m, struct ifnet **ifp)
+    ifnet **ifp)
 {
 	struct nf_priv *nf_priv;
+	struct mbuf *m;
 	int np;
 	uint16_t sport, dport, plen, magic;
 	uint8_t *indata = (uint8_t *) adapter->recv[i]->buf_addr + sizeof(struct
@@ -217,7 +218,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len, struct
 	if (len < sizeof(struct nf_metadata)) {
 		device_printf(dev, "%s: short frame (%d)\n",
 		    __func__, len);
-		return (EINVAL);
+		return (NULL);
 	}
 
 	sport = le16toh(mdata->sport);
@@ -230,7 +231,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len, struct
 		device_printf(dev, "%s: corrupted packet (%zd + %d > %d "
 		    "|| magic 0x%04x != 0x%04x)\n", __func__, sizeof(struct
 		    nf_metadata), plen, len, magic, SUME_RIFFA_MAGIC);
-		return(ENOMEM);
+		return(NULL);
 	}
 
 	/* We got the packet from one of the even bits */
@@ -238,7 +239,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len, struct
 	if (np > sume_nports) {
 		device_printf(dev, "%s: invalid destination port 0x%04x"
 		    "(%d)\n", __func__, dport, np);
-		return (EINVAL);
+		return (NULL);
 	}
 	*ifp = adapter->ifp[np];
 
@@ -249,21 +250,20 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len, struct
 		device_printf(dev, "Device nf%d not up.\n", np);
 #endif
 		*ifp = NULL;
-		return (ENETDOWN);
+		return (NULL);
 	}
 
 #ifdef DEBUG
 	printf("Building mbuf with length: %d\n", plen);
 #endif
-	*m = m_getm(NULL, plen, M_NOWAIT, MT_DATA);
-	if (*m == NULL) {
-		return (ENOMEM);
-	}
+	m = m_getm(NULL, plen, M_NOWAIT, MT_DATA);
+	if (m == NULL)
+		return (NULL);
 
 	/* Copy the data in at the right offset. */
-	m_copyback(*m, 0, plen, (void *) (indata + sizeof(struct nf_metadata)));
+	m_copyback(m, 0, plen, (void *) (indata + sizeof(struct nf_metadata)));
 
-	return (0);
+	return (m);
 }
 
 /* Packet to transmit. We take the packet data from the mbuf and copy it to the
@@ -650,9 +650,8 @@ sume_intr_handler(void *arg)
 					 * are words.
 					 */
 					if (i == SUME_RIFFA_CHANNEL_DATA) {
-						error = sume_rx_build_mbuf(
-						    adapter, i, len << 2, &m,
-						    &ifp);
+						m = sume_rx_build_mbuf(
+						    adapter, i, len << 2, &ifp);
 						adapter->recv[i]->state =
 						    SUME_RIFFA_CHAN_STATE_IDLE;
 					} else if (i ==
