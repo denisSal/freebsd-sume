@@ -282,17 +282,20 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	int error, i, last, offset;
 	device_t dev;
 	struct nf_metadata *mdata;
+	int padlen = SUME_MIN_PKT_SIZE;
 
 	nf_priv = ifp->if_softc;
 	adapter = nf_priv->adapter;
 	i = nf_priv->riffa_channel;
 	dev = adapter->dev;
 
-#ifdef DEBUG
-	printf("Sending %d bytes to nf%d\n", m->m_pkthdr.len, nf_priv->port);
-#endif
 	/* Small packets need to be padded and their len expanded? */
+	if (m->m_pkthdr.len > SUME_MIN_PKT_SIZE)
+		padlen = m->m_pkthdr.len;
 
+#ifdef DEBUG
+	printf("Sending %d bytes to nf%d\n", padlen, nf_priv->port);
+#endif
 	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
 
 	outbuf = (uint8_t *) adapter->send[i]->buf_addr + sizeof(struct
@@ -322,18 +325,20 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
+	/* Zero out the padded data? */
+	bzero(outbuf + sizeof(struct nf_metadata), SUME_MIN_PKT_SIZE);
 	/* Skip the first 16 bytes for the metadata. */
 	m_copydata(m, 0, m->m_pkthdr.len, outbuf + sizeof(struct nf_metadata));
 	adapter->send[i]->len = sizeof(struct nf_metadata) / 4;	/* words */
-	adapter->send[i]->len += (m->m_pkthdr.len / 4) +
-	    ((m->m_pkthdr.len % 4 == 0) ? 0 : 1);
+	adapter->send[i]->len += (padlen / 4) +
+	    ((padlen % 4 == 0) ? 0 : 1);
 
 	/* Fill in the metadata. */
 	mdata->sport = htole16(
 	    1 << (nf_priv->port * 2 + 1)); /* CPU(DMA) ports are odd. */
 	mdata->dport = htole16(
 	    1 << (nf_priv->port * 2)); /* MAC ports are even. */
-	mdata->plen = htole16(m->m_pkthdr.len);
+	mdata->plen = htole16(padlen);
 	mdata->magic = htole16(SUME_RIFFA_MAGIC);
 	mdata->t1 = htole32(0);
 	mdata->t2 = htole32(0);

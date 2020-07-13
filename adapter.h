@@ -100,6 +100,8 @@
 
 #define	SUME_DPORT_MASK			0xaa
 
+#define	SUME_MIN_PKT_SIZE		40
+
 struct irq {
 	struct resource		*res;
 	uint32_t		rid;
