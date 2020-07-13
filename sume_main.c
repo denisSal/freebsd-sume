@@ -202,11 +202,11 @@ sume_probe(device_t dev)
  * correct interface to rcvif and send the packet to the OS with if_input.
  */
 static struct mbuf *
-sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len, struct
-    ifnet **ifp)
+sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 {
 	struct nf_priv *nf_priv;
 	struct mbuf *m;
+	struct ifnet *ifp = NULL;
 	int np;
 	uint16_t sport, dport, plen, magic;
 	uint8_t *indata = (uint8_t *) adapter->recv[i]->buf_addr + sizeof(struct
@@ -231,7 +231,6 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len, struct
 		device_printf(dev, "%s: corrupted packet (%zd + %d > %d "
 		    "|| magic 0x%04x != 0x%04x)\n", __func__, sizeof(struct
 		    nf_metadata), plen, len, magic, SUME_RIFFA_MAGIC);
-		return(NULL);
 	}
 
 	/* We got the packet from one of the even bits */
@@ -241,15 +240,14 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len, struct
 		    "(%d)\n", __func__, dport, np);
 		return (NULL);
 	}
-	*ifp = adapter->ifp[np];
+	ifp = adapter->ifp[np];
 
 	/* If the interface is down, well, we are done. */
-	nf_priv = (*ifp)->if_softc;
+	nf_priv = ifp->if_softc;
 	if (nf_priv->port_up == 0) {
 #ifdef DEBUG
 		device_printf(dev, "Device nf%d not up.\n", np);
 #endif
-		*ifp = NULL;
 		return (NULL);
 	}
 
@@ -262,6 +260,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len, struct
 
 	/* Copy the data in at the right offset. */
 	m_copyback(m, 0, plen, (void *) (indata + sizeof(struct nf_metadata)));
+	m->m_pkthdr.rcvif = ifp;
 
 	return (m);
 }
@@ -292,7 +291,6 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 #ifdef DEBUG
 	printf("Sending %d bytes to nf%d\n", m->m_pkthdr.len, nf_priv->port);
 #endif
-
 	/* Small packets need to be padded and their len expanded? */
 
 	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
@@ -651,7 +649,7 @@ sume_intr_handler(void *arg)
 					 */
 					if (i == SUME_RIFFA_CHANNEL_DATA) {
 						m = sume_rx_build_mbuf(
-						    adapter, i, len << 2, &ifp);
+						    adapter, i, len << 2);
 						adapter->recv[i]->state =
 						    SUME_RIFFA_CHAN_STATE_IDLE;
 					} else if (i ==
@@ -700,8 +698,8 @@ sume_intr_handler(void *arg)
 	}
 	SUME_UNLOCK(adapter);
 
-	if (ifp != NULL && m != NULL) {
-		m->m_pkthdr.rcvif = ifp;
+	if (m != NULL) {
+		ifp = m->m_pkthdr.rcvif;
 		(*ifp->if_input)(ifp, m);
 	}
 }
