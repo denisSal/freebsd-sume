@@ -197,7 +197,8 @@ sume_probe(device_t dev)
 	return (ENXIO);
 }
 
-/* Building mbuf for packet received from SUME. We expect to receive 'len'
+/*
+ * Building mbuf for packet received from SUME. We expect to receive 'len'
  * bytes of data (including metadata) written from the bouncebuffer address
  * buf_addr+3*sizeof(uint32_t). Metadata will tell us which SUME interface
  * received the packet (sport will be 1, 2, 4 or 8), the packet length (plen),
@@ -267,7 +268,8 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	return (m);
 }
 
-/* Packet to transmit. We take the packet data from the mbuf and copy it to the
+/*
+ * Packet to transmit. We take the packet data from the mbuf and copy it to the
  * bouncebuffer address buf_addr+3*sizeof(uint32_t)+16. The 16 bytes before the
  * packet data are for metadata: sport/dport (depending on our source
  * interface), packet length and magic 0xcafe. We tell the SUME about the
@@ -302,6 +304,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	outbuf = (uint8_t *) adapter->send[i]->buf_addr + sizeof(struct
 		nf_bb_desc);
 	mdata = (struct nf_metadata *) outbuf;
+
 	/*
 	 * Check state. It's the best we can do for now.
 	 */
@@ -382,7 +385,8 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	return (0);
 }
 
-/* SUME interrupt handler for when we get a valid interrupt from the board.
+/*
+ * SUME interrupt handler for when we get a valid interrupt from the board.
  * There are 2 interrupt vectors, we use vect0 when the number of channels is
  * lower then 7 and vect1 otherwise. Theoretically, we can receive interrupt
  * for any of the available channels, but RIFFA DMA uses only 2: 0 and 1, so we
@@ -490,11 +494,9 @@ sume_intr_handler(void *arg)
 						adapter->send[i]->state =
 						    SUME_RIFFA_CHAN_STATE_IDLE;
 						check_queues(adapter);
-					} else if (i == SUME_RIFFA_CHANNEL_REG) {
+					} else if (i == SUME_RIFFA_CHANNEL_REG)
 						wakeup(&adapter->send[i]->event);
-						printf("Wake up send "
-						    "thread!\n");
-					} else {
+					else {
 						device_printf(dev, "%s: "
 						    "interrupt on ch %d "
 						    "unexpected in send+4 "
@@ -656,12 +658,9 @@ sume_intr_handler(void *arg)
 						    adapter, i, len << 2);
 						adapter->recv[i]->state =
 						    SUME_RIFFA_CHAN_STATE_IDLE;
-					} else if (i ==
-					    SUME_RIFFA_CHANNEL_REG) {
+					} else if (i == SUME_RIFFA_CHANNEL_REG)
 						wakeup(&adapter->recv[i]->event);
-						printf("Wake up recv "
-						    "thread!\n");
-					} else {
+					else {
 						device_printf(dev, "%s: "
 						    "interrupt on ch %d "
 						    "unexpected in recv+2 "
@@ -708,7 +707,8 @@ sume_intr_handler(void *arg)
 	}
 }
 
-/* Filtering interrupts. We wait for the adapter to go into the 'running' state
+/*
+ * Filtering interrupts. We wait for the adapter to go into the 'running' state
  * to start accepting them. Also, we ignore them if the first two bits of the
  * vector are set.
  */
@@ -853,7 +853,7 @@ sume_if_down(struct nf_priv *nf_priv)
 {
 
 	if (!nf_priv->port_up)
-		return; /* already down */
+		return; /* Already down. */
 
 	nf_priv->port_up = 0;
 
@@ -865,7 +865,7 @@ sume_if_init_locked(struct nf_priv *nf_priv)
 {
 
 	if (nf_priv->port_up)
-		return; /* already up */
+		return; /* Already up. */
 
 	nf_priv->port_up = 1;
 
@@ -979,7 +979,7 @@ sume_initiate_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 	/* Tag to indentify request. */
 	data->rtag = htole32(++adapter->send[i]->rtag);
 	data->strb = htole32(strb);
-	adapter->send[i]->len = 4;	/* Words */
+	adapter->send[i]->len = 4;	/* words */
 
 	error = sume_reg_wr_locked(adapter, i);
 	if (error) {
@@ -1040,8 +1040,10 @@ sume_read_reg_result(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	 */
 	i = SUME_RIFFA_CHANNEL_REG;
 
-	/* We only need to be woken up at the end of the transaction. */
-	/* Timeout after 1s. */
+	/*
+	 * We only need to be woken up at the end of the transaction.
+	 * Timeout after 1s.
+	 */
 	mtx_lock(&adapter->recv[i]->recv_sleep);
 	bus_dmamap_sync(adapter->recv[i]->my_tag, adapter->recv[i]->my_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
