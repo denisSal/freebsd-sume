@@ -56,6 +56,8 @@
 #include <netinet/in_var.h>
 #include <netinet/if_ether.h>
 
+#include <sys/sysctl.h>
+
 #include "adapter.h"
 
 #define	PCI_VENDOR_ID_XILINX 0x10ee
@@ -150,7 +152,9 @@ static void check_queues(struct sume_adapter *);
 static inline uint32_t read_reg(struct sume_adapter *, int);
 static inline void write_reg(struct sume_adapter *, int, uint32_t);
 
-//#define	DEBUG // replace with sysctl variable
+static struct sysctl_ctx_list clist;
+static struct sysctl_oid *poid;
+static int sume_debug;
 
 struct {
 	uint16_t device;
@@ -245,15 +249,13 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	/* If the interface is down, well, we are done. */
 	nf_priv = ifp->if_softc;
 	if (nf_priv->port_up == 0) {
-#ifdef DEBUG
-		device_printf(dev, "Device nf%d not up.\n", np);
-#endif
+		if (sume_debug)
+			device_printf(dev, "Device nf%d not up.\n", np);
 		return (NULL);
 	}
 
-#ifdef DEBUG
-	printf("Building mbuf with length: %d\n", plen);
-#endif
+	if (sume_debug)
+		printf("Building mbuf with length: %d\n", plen);
 	m = m_getm(NULL, plen, M_NOWAIT, MT_DATA);
 	if (m == NULL)
 		return (NULL);
@@ -293,9 +295,8 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	if (m->m_pkthdr.len > SUME_MIN_PKT_SIZE)
 		padlen = m->m_pkthdr.len;
 
-#ifdef DEBUG
-	printf("Sending %d bytes to nf%d\n", padlen, nf_priv->port);
-#endif
+	if (sume_debug)
+		printf("Sending %d bytes to nf%d\n", padlen, nf_priv->port);
 	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
 
 	outbuf = (uint8_t *) adapter->send[i]->buf_addr + sizeof(struct
@@ -455,11 +456,10 @@ sume_intr_handler(void *arg)
 		loops = 0;
 		while ((vect & (SUME_MSI_TXBUF | SUME_MSI_TXDONE)) &&
 		    loops <= 5) {
-#ifdef DEBUG
-			device_printf(dev, "%s: TX ch %d state %u vect = "
-			    "0x%08x\n", __func__, i, adapter->send[i]->state,
-			    vect);
-#endif
+			if (sume_debug)
+				device_printf(dev, "%s: TX ch %d state %u "
+				    "vect = 0x%08x\n", __func__, i,
+				    adapter->send[i]->state, vect);
 			switch (adapter->send[i]->state) {
 			case SUME_RIFFA_CHAN_STATE_IDLE:
 				break;
@@ -534,11 +534,10 @@ sume_intr_handler(void *arg)
 		loops = 0;
 		while ((vect & (SUME_MSI_RXQUE | SUME_MSI_RXBUF |
 			SUME_MSI_RXDONE)) && loops < 5) {
-#ifdef DEBUG
-			device_printf(dev, "%s: RX ch %d state %u vect = "
-			    "0x%08x\n", __func__, i, adapter->recv[i]->state,
-			    vect);
-#endif
+			if (sume_debug)
+				device_printf(dev, "%s: RX ch %d state %u "
+				    "vect = 0x%08x\n", __func__, i,
+				    adapter->recv[i]->state, vect);
 			switch (adapter->recv[i]->state) {
 			case SUME_RIFFA_CHAN_STATE_IDLE:
 				if (vect & SUME_MSI_RXQUE) {
@@ -1545,10 +1544,22 @@ mod_event(module_t mod, int cmd, void *arg)
 	switch (cmd) {
 	case MOD_LOAD:
 		printf("MOD_LOAD\n");
+		sysctl_ctx_init(&clist);
+		poid = SYSCTL_ADD_NODE(&clist, SYSCTL_STATIC_CHILDREN(_hw),
+		    OID_AUTO, "sume", CTLFLAG_RW, 0, "SUME top-level tree");
+		if (poid == NULL) {
+			printf("SYSCTL_ADD_NODE failed.\n");
+			break;
+		}
+		SYSCTL_ADD_INT(&clist, SYSCTL_CHILDREN(poid), OID_AUTO,
+		    "debug", CTLFLAG_RW, &sume_debug, 0, "debug int leaf");
 		break;
 
 	case MOD_UNLOAD:
 		printf("MOD_UNLOAD\n");
+		if (sysctl_ctx_free(&clist)) {
+			printf("sysctl_ctx_free failed.\n");
+		}
 		break;
 	}
 
