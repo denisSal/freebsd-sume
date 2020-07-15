@@ -286,15 +286,15 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	int error, i, last, offset;
 	device_t dev;
 	struct nf_metadata *mdata;
-	int padlen = SUME_MIN_PKT_SIZE;
+	int padlen = ETH_ZLEN;
 
 	nf_priv = ifp->if_softc;
 	adapter = nf_priv->adapter;
 	i = nf_priv->riffa_channel;
 	dev = adapter->dev;
 
-	/* Small packets need to be padded and their len expanded? */
-	if (m->m_pkthdr.len > SUME_MIN_PKT_SIZE)
+	/* Packets large enough do not need to be padded */
+	if (m->m_pkthdr.len > ETH_ZLEN)
 		padlen = m->m_pkthdr.len;
 
 	if (sume_debug)
@@ -311,7 +311,6 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
 		device_printf(dev, "%s: SUME not in IDLE state (state %d)\n",
 		    __func__, adapter->send[i]->state);
-		//m_freem(m);
 		return (EBUSY);
 	}
 	/* Clear the recovery flag. */
@@ -329,8 +328,8 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
-	/* Zero out the padded data? */
-	bzero(outbuf + sizeof(struct nf_metadata), SUME_MIN_PKT_SIZE);
+	/* Zero out the padded data */
+	bzero(outbuf + sizeof(struct nf_metadata), ETH_ZLEN);
 	/* Skip the first 16 bytes for the metadata. */
 	m_copydata(m, 0, m->m_pkthdr.len, outbuf + sizeof(struct nf_metadata));
 	adapter->send[i]->len = sizeof(struct nf_metadata) / 4;	/* words */
