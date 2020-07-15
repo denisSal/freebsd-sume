@@ -1424,7 +1424,7 @@ sume_attach(device_t dev)
 		sume_nports = SUME_PORTS_MAX;
 	}
 
-	mtx_init(&adapter->lock, "Global lock", NULL, MTX_DEF);
+	mtx_init(&adapter->lock, "Global lock", NULL, MTX_DEF | MTX_NEW);
 
 	atomic_set_int(&adapter->running, 0);
 
@@ -1501,28 +1501,29 @@ static int
 sume_detach(device_t dev)
 {
 	struct sume_adapter *adapter = device_get_softc(dev);
-	int rc, i;
+	int i;
 	struct nf_priv *nf_priv;
 
-	sume_remove_riffa_buffers(adapter);
+	KASSERT(mtx_initialized(&adapter->lock), ("SUME mutex not initialized"));
+	atomic_set_int(&adapter->running, 0);
 
 	for (i = 0; i < sume_nports; i++) {
-		// XXX not really safe, fix this
+		if (adapter->ifp[i] == NULL)
+			continue;
+
 		nf_priv = adapter->ifp[i]->if_softc;
-		if (nf_priv->port_up)
-			if_down(adapter->ifp[i]);
-		ifmedia_removeall(&nf_priv->media);
-		if (adapter->ifp[i] != NULL) {
-			ether_ifdetach(adapter->ifp[i]);
+		if (nf_priv != NULL) {
+			if (nf_priv->port_up)
+				if_down(adapter->ifp[i]);
+			ifmedia_removeall(&nf_priv->media);
+			ifmedia_removeall(&nf_priv->media);
+			free(nf_priv, M_SUME);
 		}
-		free(nf_priv, M_SUME);
+
+		ether_ifdetach(adapter->ifp[i]);
 	}
 
-	mtx_destroy(&adapter->lock);
-
-	rc = bus_generic_detach(dev);
-	if (rc)
-		return (rc);
+	sume_remove_riffa_buffers(adapter);
 
 	if (adapter->irq.tag)
 		bus_teardown_intr(dev, adapter->irq.res, adapter->irq.tag);
@@ -1530,13 +1531,13 @@ sume_detach(device_t dev)
 		bus_release_resource(dev, SYS_RES_IRQ, adapter->irq.rid,
 		    adapter->irq.res);
 
-	device_delete_children(dev);
-
 	pci_release_msi(dev);
 
 	if (adapter->bar0_addr)
 		bus_release_resource(dev, SYS_RES_MEMORY, adapter->rid,
 		    adapter->bar0_addr);
+
+	mtx_destroy(&adapter->lock);
 
 	return (0);
 }
@@ -1548,7 +1549,6 @@ mod_event(module_t mod, int cmd, void *arg)
 
 	switch (cmd) {
 	case MOD_LOAD:
-		printf("MOD_LOAD\n");
 		sysctl_ctx_init(&clist);
 		poid = SYSCTL_ADD_NODE(&clist, SYSCTL_STATIC_CHILDREN(_hw),
 		    OID_AUTO, "sume", CTLFLAG_RW, 0, "SUME top-level tree");
@@ -1561,7 +1561,6 @@ mod_event(module_t mod, int cmd, void *arg)
 		break;
 
 	case MOD_UNLOAD:
-		printf("MOD_UNLOAD\n");
 		if (sysctl_ctx_free(&clist)) {
 			printf("sysctl_ctx_free failed.\n");
 		}
