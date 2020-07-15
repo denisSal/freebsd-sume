@@ -354,11 +354,12 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_LEN_REG_OFF),
 	    adapter->send[i]->len);		/* words */
 
-	/* Fill the S/G map. */
+	/* Fill the bouncebuf "descriptor". */
 	error = sume_fill_bb_desc(adapter,
 	    adapter->send[i], SUME_RIFFA_LEN(adapter->send[i]->len));
 	if (error) {
-		device_printf(dev, "%s: failed to map S/G buffer\n", __func__);
+		device_printf(dev, "%s: failed to fill the bouncebuffer "
+		    "descriptor\n", __func__);
 		return (ENOMEM);
 	}
 
@@ -580,14 +581,15 @@ sume_intr_handler(void *arg)
 						    "small.\n", __func__);
 					}
 
-					/* Build and load S/G map. */
+					/* Fill the bouncebuf "descriptor". */
 					error = sume_fill_bb_desc(adapter,
 					    adapter->recv[i], SUME_RIFFA_LEN(
 					    adapter->recv[i]->len));
 					if (error != 0) {
 						device_printf(dev, "%s: "
-						    "Failed to build S/G "
-						    "map.\n", __func__);
+						    "Failed to build the "
+						    "bouncebuffer descriptor."
+						    "\n", __func__);
 					}
 					bus_dmamap_sync(
 					    adapter->recv[i]->my_tag,
@@ -886,13 +888,11 @@ static int
 sume_fill_bb_desc(struct sume_adapter *adapter, struct riffa_chnl_dir *p,
     uint64_t len)
 {
-	uint32_t *bouncebuf;
+	struct nf_bb_desc *bouncebuf = (struct nf_bb_desc *) p->buf_addr;
 
-	bouncebuf = (uint32_t *) p->buf_addr;
-
-	bouncebuf[0] = (p->buf_hw_addr + sizeof(struct nf_bb_desc));
-	bouncebuf[1] = (p->buf_hw_addr + sizeof(struct nf_bb_desc)) >> 32;
-	bouncebuf[2] = len >> 2;
+	bouncebuf->lower = (p->buf_hw_addr + sizeof(struct nf_bb_desc));
+	bouncebuf->upper = (p->buf_hw_addr + sizeof(struct nf_bb_desc)) >> 32;
+	bouncebuf->len = len >> 2;
 
 	p->num_sg = 1;
 
@@ -914,11 +914,12 @@ sume_reg_wr_locked(struct sume_adapter *adapter, int i)
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_LEN_REG_OFF),
 	    adapter->send[i]->len);	/* words */
 
-	/* Fill the S/G map. */
+	/* Fill the bouncebuf "descriptor". */
 	error = sume_fill_bb_desc(adapter, adapter->send[i],
 	    SUME_RIFFA_LEN(adapter->send[i]->len));
 	if (error != 0) {
-		device_printf(dev, "%s: failed to map S/G buffer\n", __func__);
+		device_printf(dev, "%s: failed to fill the bouncebuffer "
+		    "descriptor\n", __func__);
 		return (EFAULT);
 	}
 
