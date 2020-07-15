@@ -1450,8 +1450,6 @@ sume_attach(device_t dev)
 	/* Ready to go, "enable" IRQ. */
 	atomic_set_int(&adapter->running, 1);
 
-	bus_generic_attach(dev);
-
 	return (0);
 
 error:
