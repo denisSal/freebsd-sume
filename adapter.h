@@ -109,7 +109,7 @@ struct irq {
 } __aligned(CACHE_LINE_SIZE);
 
 struct riffa_chnl_dir {
-	char			*buf_addr;	/* S/G addresses+len. */
+	char			*buf_addr;	/* bouncebuf addresses+len. */
 	bus_addr_t		buf_hw_addr;	/* -- " -- mapped. */
 	uint32_t		num_sg;
 	uint32_t		state;

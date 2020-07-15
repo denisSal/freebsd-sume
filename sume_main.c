@@ -60,7 +60,8 @@
 
 #include "adapter.h"
 
-#define	PCI_VENDOR_ID_XILINX 0x10ee
+#define	PCI_VENDOR_ID_XILINX	0x10ee
+#define	PCI_DEVICE_ID_SUME	0x7028
 
 /* SUME bus driver interface */
 static int sume_probe(device_t);
@@ -160,7 +161,7 @@ struct {
 	uint16_t device;
 	char *desc;
 } sume_pciids[] = {
-	{0x7028, "NetFPGA SUME"},
+	{PCI_DEVICE_ID_SUME, "NetFPGA SUME"},
 };
 
 static inline uint32_t
@@ -1204,7 +1205,7 @@ sume_if_start_locked(struct ifnet *ifp)
 		if (m_head == NULL)
 			return (1);
 		/*
-		*  Failed xmit means we need to try again later so requeue
+		*  Failed xmit means we need to try again later so requeue.
 		*/
 		if (sume_start_xmit(ifp, m_head)) {
 			if (m_head != NULL)
@@ -1225,7 +1226,7 @@ sume_if_start(struct ifnet *ifp)
 	struct sume_adapter *adapter = nf_priv->adapter;
 	int i = nf_priv->riffa_channel;
 
-	if ((ifp->if_drv_flags & (IFF_DRV_RUNNING|IFF_DRV_OACTIVE)) !=
+	if ((ifp->if_drv_flags & (IFF_DRV_RUNNING | IFF_DRV_OACTIVE)) !=
 	    IFF_DRV_RUNNING)
 		return;
 	if (!nf_priv->port_up)
@@ -1233,9 +1234,11 @@ sume_if_start(struct ifnet *ifp)
 
 	SUME_LOCK(adapter);
 	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
-		//device_printf(adapter->dev, "%s: SUME not in IDLE state "
-			//"(state %d)\n", __func__, adapter->send[i]->state);
 		SUME_UNLOCK(adapter);
+		if (sume_debug)
+			device_printf(adapter->dev, "%s: SUME not in IDLE "
+			    "state (state %d)\n", __func__,
+			    adapter->send[i]->state);
 		return;
 	}
 
