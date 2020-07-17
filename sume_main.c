@@ -153,8 +153,6 @@ static void check_queues(struct sume_adapter *);
 static inline uint32_t read_reg(struct sume_adapter *, int);
 static inline void write_reg(struct sume_adapter *, int, uint32_t);
 
-static struct sysctl_ctx_list clist;
-static struct sysctl_oid *poid;
 static int sume_debug;
 
 struct {
@@ -224,6 +222,8 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	if (len < sizeof(struct nf_metadata)) {
 		device_printf(dev, "%s: short frame (%d)\n",
 		    __func__, len);
+		adapter->packets_err++;
+		adapter->bytes_err += len;
 		return (NULL);
 	}
 
@@ -244,6 +244,8 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	if (np > sume_nports) {
 		device_printf(dev, "%s: invalid destination port 0x%04x"
 		    "(%d)\n", __func__, dport, np);
+		adapter->packets_err++;
+		adapter->bytes_err += len;
 		return (NULL);
 	}
 	ifp = adapter->ifp[np];
@@ -253,19 +255,27 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	if (nf_priv->port_up == 0) {
 		if (sume_debug)
 			device_printf(dev, "Device nf%d not up.\n", np);
+		adapter->packets_err++;
+		adapter->bytes_err += len;
 		return (NULL);
 	}
 
 	if (sume_debug)
 		printf("Building mbuf with length: %d\n", plen);
+
 	m = m_getm(NULL, plen, M_NOWAIT, MT_DATA);
-	if (m == NULL)
+	if (m == NULL) {
+		adapter->packets_err++;
+		adapter->bytes_err += len;
 		return (NULL);
+	}
 
 	/* Copy the data in at the right offset. */
 	m_copyback(m, 0, plen, (void *) (indata + sizeof(struct nf_metadata)));
 	m->m_pkthdr.rcvif = ifp;
 
+	nf_priv->stats.rx_packets++;
+	nf_priv->stats.rx_bytes += len;
 	return (m);
 }
 
@@ -306,14 +316,6 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 		nf_bb_desc);
 	mdata = (struct nf_metadata *) outbuf;
 
-	/*
-	 * Check state. It's the best we can do for now.
-	 */
-	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
-		device_printf(dev, "%s: SUME not in IDLE state (state %d)\n",
-		    __func__, adapter->send[i]->state);
-		return (EBUSY);
-	}
 	/* Clear the recovery flag. */
 	adapter->send[i]->flags &= ~SUME_CHAN_STATE_RECOVERY_FLAG;
 
@@ -323,6 +325,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 		device_printf(dev, "%s: Packet too big for bounce buffer "
 		    "(%d)\n", __func__, m->m_pkthdr.len);
 		m_freem(m);
+		nf_priv->stats.tx_dropped++;
 		return (ENOMEM);
 	}
 
@@ -361,6 +364,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	if (error) {
 		device_printf(dev, "%s: failed to fill the bouncebuffer "
 		    "descriptor\n", __func__);
+		nf_priv->stats.tx_dropped++;
 		return (ENOMEM);
 	}
 
@@ -381,6 +385,8 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
 	/* We can free as long as we use the bounce buffer. */
+	nf_priv->stats.tx_packets++;
+	nf_priv->stats.tx_bytes += padlen;
 	m_freem(m);
 
 	return (0);
@@ -1290,6 +1296,10 @@ sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 	nf_priv->port = port;
 	nf_priv->riffa_channel = SUME_RIFFA_CHANNEL_DATA;
 
+	IFQ_SET_MAXLEN(&ifp->if_snd, ifqmaxlen);
+	ifp->if_snd.ifq_drv_maxlen = ifqmaxlen;
+	IFQ_SET_READY(&ifp->if_snd);
+
 	uint8_t hw_addr[ETHER_ADDR_LEN] = DEFAULT_ETHER_ADDRESS;
 	hw_addr[ETHER_ADDR_LEN-1] = port;
 	ether_ifattach(ifp, hw_addr);
@@ -1410,6 +1420,78 @@ sume_probe_riffa_buffers(struct sume_adapter *adapter)
 	return (error);
 }
 
+static void
+sume_sysctl_init(struct sume_adapter *adapter)
+{
+	device_t dev = adapter->dev;
+	struct sysctl_ctx_list *ctx = device_get_sysctl_ctx(dev);
+	struct sysctl_oid *tree = device_get_sysctl_tree(dev);
+	struct sysctl_oid *tmp_tree;
+	int i;
+
+	tree = SYSCTL_ADD_NODE(ctx, SYSCTL_STATIC_CHILDREN(_dev),
+	    OID_AUTO, "sume", CTLFLAG_RW, 0, "SUME top-level tree");
+	if (tree == NULL) {
+		printf("SYSCTL_ADD_NODE failed.\n");
+		return;
+	}
+	SYSCTL_ADD_INT(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
+	    "debug", CTLFLAG_RW, &sume_debug, 0, "debug int leaf");
+
+	/* total RX error stats */
+	SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tree), OID_AUTO, "rx_epkts",
+	    CTLFLAG_RD, &adapter->packets_err, 0, "rx errors");
+	SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tree), OID_AUTO, "rx_ebytes",
+	    CTLFLAG_RD, &adapter->bytes_err, 0, "rx errors");
+
+#define IFC_NAME_LEN 4
+	char namebuf[IFC_NAME_LEN];
+
+	for (i = sume_nports-1; i >= 0; i--) {
+		struct ifnet *ifp = adapter->ifp[i];
+		if (ifp == NULL)
+			continue;
+
+		struct nf_priv *nf_priv = ifp->if_softc;
+
+		snprintf(namebuf, IFC_NAME_LEN, "nf%d", i);
+		tmp_tree = SYSCTL_ADD_NODE(ctx, SYSCTL_CHILDREN(tree),
+		    OID_AUTO, namebuf, CTLFLAG_RW, 0, "SUME ifc tree");
+		if (tmp_tree == NULL) {
+			printf("SYSCTL_ADD_NODE failed.\n");
+			return;
+		}
+
+		/* RX stats */
+		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
+		    "rx_bytes", CTLFLAG_RD,
+		    &nf_priv->stats.rx_bytes, 0,
+		    "rx bytes");
+		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
+		    "rx_dropped", CTLFLAG_RD,
+		    &nf_priv->stats.rx_dropped, 0,
+		    "rx dropped");
+		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
+		    "rx_packets", CTLFLAG_RD,
+		    &nf_priv->stats.rx_packets, 0,
+		    "rx packets");
+
+		/* TX stats */
+		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
+		    "tx_bytes", CTLFLAG_RD,
+		    &nf_priv->stats.tx_bytes, 0,
+		    "tx bytes");
+		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
+		    "tx_dropped", CTLFLAG_RD,
+		    &nf_priv->stats.tx_dropped, 0,
+		    "tx dropped");
+		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
+		    "tx_packets", CTLFLAG_RD,
+		    &nf_priv->stats.tx_packets, 0,
+		    "tx packets");
+	}
+}
+
 static int
 sume_attach(device_t dev)
 {
@@ -1443,6 +1525,9 @@ sume_attach(device_t dev)
 		if (error != 0)
 			goto error;
 	}
+
+	/*  Register stats and register sysctls. */
+	sume_sysctl_init(adapter);
 
 	/* Reset the HW. */
 	read_reg(adapter, RIFFA_INFO_REG_OFF);
@@ -1547,21 +1632,9 @@ mod_event(module_t mod, int cmd, void *arg)
 
 	switch (cmd) {
 	case MOD_LOAD:
-		sysctl_ctx_init(&clist);
-		poid = SYSCTL_ADD_NODE(&clist, SYSCTL_STATIC_CHILDREN(_hw),
-		    OID_AUTO, "sume", CTLFLAG_RW, 0, "SUME top-level tree");
-		if (poid == NULL) {
-			printf("SYSCTL_ADD_NODE failed.\n");
-			break;
-		}
-		SYSCTL_ADD_INT(&clist, SYSCTL_CHILDREN(poid), OID_AUTO,
-		    "debug", CTLFLAG_RW, &sume_debug, 0, "debug int leaf");
 		break;
 
 	case MOD_UNLOAD:
-		if (sysctl_ctx_free(&clist)) {
-			printf("sysctl_ctx_free failed.\n");
-		}
 		break;
 	}
 

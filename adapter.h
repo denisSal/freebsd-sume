@@ -100,13 +100,22 @@
 
 #define	SUME_DPORT_MASK			0xaa
 
-#define	ETH_ZLEN			60
+#define	ETH_ZLEN			64
 
 struct irq {
 	struct resource		*res;
 	uint32_t		rid;
 	void			*tag;
 } __aligned(CACHE_LINE_SIZE);
+
+struct nf_stats {
+	uint64_t		rx_packets;
+	uint64_t		rx_dropped;
+	uint64_t		rx_bytes;
+	uint64_t		tx_packets;
+	uint64_t		tx_dropped;
+	uint64_t		tx_bytes;
+};
 
 struct riffa_chnl_dir {
 	char			*buf_addr;	/* bouncebuf addresses+len. */
@@ -139,6 +148,7 @@ struct nf_priv {
 	uint32_t		port_up;
 	uint32_t		riffa_channel;
 	struct ifmedia		media;
+	struct nf_stats		stats;
 };
 
 struct sume_adapter {
@@ -160,6 +170,9 @@ struct sume_adapter {
 	struct riffa_chnl_dir	**send;
 
 	uint32_t		last_ifc;
+
+	uint64_t		packets_err;
+	uint64_t		bytes_err;
 };
 
 /* SUME metadata:
