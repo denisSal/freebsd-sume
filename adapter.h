@@ -100,7 +100,7 @@
 
 #define	SUME_DPORT_MASK			0xaa
 
-#define	ETH_ZLEN			64
+#define	SUME_MIN_PKT_SIZE		(ETHER_MIN_LEN - ETHER_CRC_LEN)
 
 struct irq {
 	struct resource		*res;

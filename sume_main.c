@@ -297,7 +297,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	int error, i, last, offset;
 	device_t dev;
 	struct nf_metadata *mdata;
-	int padlen = ETH_ZLEN;
+	int padlen = SUME_MIN_PKT_SIZE;
 
 	nf_priv = ifp->if_softc;
 	adapter = nf_priv->adapter;
@@ -305,7 +305,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	dev = adapter->dev;
 
 	/* Packets large enough do not need to be padded */
-	if (m->m_pkthdr.len > ETH_ZLEN)
+	if (m->m_pkthdr.len > SUME_MIN_PKT_SIZE)
 		padlen = m->m_pkthdr.len;
 
 	if (sume_debug)
@@ -333,7 +333,7 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 	/* Zero out the padded data */
-	bzero(outbuf + sizeof(struct nf_metadata), ETH_ZLEN);
+	bzero(outbuf + sizeof(struct nf_metadata), SUME_MIN_PKT_SIZE);
 	/* Skip the first 16 bytes for the metadata. */
 	m_copydata(m, 0, m->m_pkthdr.len, outbuf + sizeof(struct nf_metadata));
 	adapter->send[i]->len = sizeof(struct nf_metadata) / 4;	/* words */
