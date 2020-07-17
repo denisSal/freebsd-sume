@@ -316,6 +316,15 @@ sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
 		nf_bb_desc);
 	mdata = (struct nf_metadata *) outbuf;
 
+	/*
+	 * Check state. It's the best we can do for now.
+	 */
+	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
+		device_printf(dev, "%s: SUME not in IDLE state (state %d)\n",
+		    __func__, adapter->send[i]->state);
+		return (EBUSY);
+	}
+
 	/* Clear the recovery flag. */
 	adapter->send[i]->flags &= ~SUME_CHAN_STATE_RECOVERY_FLAG;
 
