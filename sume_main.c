@@ -1211,27 +1211,23 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 static int
 sume_if_start_locked(struct ifnet *ifp)
 {
-	struct mbuf *m_head;
+	struct mbuf *m;
 	struct nf_priv *nf_priv = ifp->if_softc;
 	struct sume_adapter *adapter = nf_priv->adapter;
 
-	if (!IFQ_DRV_IS_EMPTY(&ifp->if_snd)) {
-		IFQ_DRV_DEQUEUE(&ifp->if_snd, m_head);
-		if (m_head == NULL)
-			return (1);
-		/*
-		*  Failed xmit means we need to try again later so requeue.
-		*/
-		if (sume_start_xmit(ifp, m_head)) {
-			if (m_head != NULL)
-				IFQ_DRV_PREPEND(&ifp->if_snd, m_head);
-		}
-
-		adapter->last_ifc = nf_priv->port;
-		return (0);
+	IFQ_DRV_DEQUEUE(&ifp->if_snd, m);
+	if (m == NULL)
+		return (1);
+	/*
+	*  Failed xmit means we need to try again later so requeue.
+	*/
+	if (sume_start_xmit(ifp, m)) {
+		if (m != NULL)
+			IFQ_DRV_PREPEND(&ifp->if_snd, m);
 	}
 
-	return (1);
+	adapter->last_ifc = nf_priv->port;
+	return (0);
 }
 
 static void
