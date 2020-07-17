@@ -245,7 +245,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 		device_printf(dev, "%s: invalid destination port 0x%04x"
 		    "(%d)\n", __func__, dport, np);
 		adapter->packets_err++;
-		adapter->bytes_err += len;
+		adapter->bytes_err += plen;
 		return (NULL);
 	}
 	ifp = adapter->ifp[np];
@@ -256,7 +256,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 		if (sume_debug)
 			device_printf(dev, "Device nf%d not up.\n", np);
 		adapter->packets_err++;
-		adapter->bytes_err += len;
+		adapter->bytes_err += plen;
 		return (NULL);
 	}
 
@@ -266,7 +266,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	m = m_getm(NULL, plen, M_NOWAIT, MT_DATA);
 	if (m == NULL) {
 		adapter->packets_err++;
-		adapter->bytes_err += len;
+		adapter->bytes_err += plen;
 		return (NULL);
 	}
 
@@ -275,7 +275,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	m->m_pkthdr.rcvif = ifp;
 
 	nf_priv->stats.rx_packets++;
-	nf_priv->stats.rx_bytes += len;
+	nf_priv->stats.rx_bytes += plen;
 	return (m);
 }
 
