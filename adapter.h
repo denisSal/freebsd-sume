@@ -133,8 +133,6 @@ struct riffa_chnl_dir {
 	bus_dmamap_t		my_map;
 
 	/* Used only for register read/write */
-	struct mtx		send_sleep;
-	struct mtx		recv_sleep;
 	uint32_t		event;
 };
 

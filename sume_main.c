@@ -969,7 +969,7 @@ sume_initiate_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 {
 	struct sume_adapter *adapter;
 	struct nf_regop_data *data;
-	int error = 0, i;
+	int error, i;
 
 	adapter = nf_priv->adapter;
 
@@ -981,15 +981,15 @@ sume_initiate_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 	 * 4. Sleep and wait for result and return success or error.
 	 */
 	i = SUME_RIFFA_CHANNEL_REG;
-	mtx_lock(&adapter->send[i]->send_sleep);
+	SUME_LOCK(adapter);
 
 	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
-		mtx_unlock(&adapter->send[i]->send_sleep);
+		SUME_UNLOCK(adapter);
 		return (EBUSY);
 	}
 
 	data = (struct nf_regop_data *) (adapter->send[i]->buf_addr +
-		sizeof(struct nf_bb_desc));
+	    sizeof(struct nf_bb_desc));
 	data->addr = htole32(sifr->addr);
 	data->val = htole32(sifr->val);
 	/* Tag to indentify request. */
@@ -999,19 +999,14 @@ sume_initiate_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 
 	error = sume_reg_wr_locked(adapter, i);
 	if (error) {
-		mtx_unlock(&adapter->send[i]->send_sleep);
+		SUME_UNLOCK(adapter);
 		return (EFAULT);
 	}
 
 	/* Timeout after 1s. */
-	error = msleep(&adapter->send[i]->event,
-	    &adapter->send[i]->send_sleep, 0, "Waiting recv finish", 1 * hz);
-
-	if (error == EWOULDBLOCK) {
-		device_printf(adapter->dev, "%s: wait error: %d\n", __func__,
-		    error);
-		mtx_unlock(&adapter->send[i]->send_sleep);
-		return (EWOULDBLOCK);
+	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_LEN) {
+		error = msleep(&adapter->send[i]->event, &adapter->lock, 0,
+		    "Waiting recv finish", 1 * hz);
 	}
 
 	/* This was a write so we are done; were interrupted, or timed out. */
@@ -1032,7 +1027,7 @@ sume_initiate_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 	 * event.
 	 */
 
-	mtx_unlock(&adapter->send[i]->send_sleep);
+	SUME_UNLOCK(adapter);
 
 	return (error);
 }
@@ -1042,7 +1037,7 @@ sume_read_reg_result(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 {
 	struct sume_adapter *adapter;
 	struct nf_regop_data *data;
-	int error, i;
+	int error = 0, i;
 	device_t dev;
 
 	adapter = nf_priv->adapter;
@@ -1056,22 +1051,26 @@ sume_read_reg_result(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	 */
 	i = SUME_RIFFA_CHANNEL_REG;
 
+	SUME_LOCK(adapter);
+
+	bus_dmamap_sync(adapter->recv[i]->my_tag, adapter->recv[i]->my_map,
+	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	/*
 	 * We only need to be woken up at the end of the transaction.
 	 * Timeout after 1s.
 	 */
-	mtx_lock(&adapter->recv[i]->recv_sleep);
-	bus_dmamap_sync(adapter->recv[i]->my_tag, adapter->recv[i]->my_map,
-	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
-	error = msleep(&adapter->recv[i]->event,
-	    &adapter->recv[i]->recv_sleep, 0, "Waiting transaction finish",
-	    1 * hz);
+	if (adapter->recv[i]->state != SUME_RIFFA_CHAN_STATE_READ) {
+		error = msleep(&adapter->recv[i]->event, &adapter->lock, 0,
+		    "Waiting transaction finish", 1 * hz);
+	}
 
-	if (error == EWOULDBLOCK) {
+	if (adapter->recv[i]->state != SUME_RIFFA_CHAN_STATE_READ ||
+	    error == EWOULDBLOCK) {
+		SUME_UNLOCK(adapter);
 		device_printf(dev, "%s: wait error: %d\n", __func__, error);
-		mtx_unlock(&adapter->recv[i]->recv_sleep);
 		return (EWOULDBLOCK);
 	}
+
 	bus_dmamap_sync(adapter->recv[i]->my_tag, adapter->recv[i]->my_map,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
@@ -1088,10 +1087,11 @@ sume_read_reg_result(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	}
 	sifr->val = le32toh(data->val);
 	adapter->recv[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
-	mtx_unlock(&adapter->recv[i]->recv_sleep);
 
 	/* We are done. */
 	adapter->send[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
+
+	SUME_UNLOCK(adapter);
 
 	return (0);
 }
@@ -1404,10 +1404,6 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 		}
 		rp[i]->buf_hw_addr = hw_addr;
 
-		/* Initialize state. */
-		mtx_init(&rp[i]->send_sleep, "Send sleep", NULL, MTX_DEF);
-		mtx_init(&rp[i]->recv_sleep, "Recv sleep", NULL, MTX_DEF);
-
 		rp[i]->rtag = -3;
 		rp[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
 	}
@@ -1515,7 +1511,7 @@ sume_attach(device_t dev)
 		sume_nports = SUME_PORTS_MAX;
 	}
 
-	mtx_init(&adapter->lock, "Global lock", NULL, MTX_DEF | MTX_NEW);
+	mtx_init(&adapter->lock, "Global lock", NULL, MTX_DEF);
 
 	atomic_set_int(&adapter->running, 0);
 
@@ -1568,8 +1564,6 @@ sume_remove_riffa_buffer(const struct sume_adapter *adapter,
 			pp[i]->buf_hw_addr = 0;
 		}
 
-		mtx_destroy(&pp[i]->recv_sleep);
-		mtx_destroy(&pp[i]->send_sleep);
 		free(pp[i], M_SUME);
 	}
 }
