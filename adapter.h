@@ -35,14 +35,12 @@
 #define	SUME_IOCTL_CMD_WRITE_REG	(SIOCGPRIVATE_0)
 #define	SUME_IOCTL_CMD_READ_REG		(SIOCGPRIVATE_1)
 
-#define	SUME_LOCK(adapter)	\
-    mtx_lock(&adapter->lock);
-#define	SUME_UNLOCK(adapter)	\
-    mtx_unlock(&adapter->lock);
+#define	SUME_LOCK(adapter)		mtx_lock(&adapter->lock);
+#define	SUME_UNLOCK(adapter)		mtx_unlock(&adapter->lock);
 
-/* Currently SUME only uses two fixed channels for all port traffic and regs. */
+/* Currently SUME only uses 2 fixed channels for all port traffic and regs. */
 #define	SUME_RIFFA_CHANNEL_DATA		0
-#define	SUME_RIFFA_CHANNEL_REG		1	/* See description at top. */
+#define	SUME_RIFFA_CHANNEL_REG		1
 #define	SUME_RIFFA_CHANNELS		2
 
 /* RIFFA constants. */
@@ -92,11 +90,15 @@
 #define	SUME_RIFFA_LO_ADDR(addr)	(addr & 0xFFFFFFFF)
 #define	SUME_RIFFA_HI_ADDR(addr)	((addr >> 32) & 0xFFFFFFFF)
 
+/* Vector bits. */
 #define	SUME_MSI_RXQUE			(1 << 0)
 #define	SUME_MSI_RXBUF			(1 << 1)
 #define	SUME_MSI_RXDONE			(1 << 2)
 #define	SUME_MSI_TXBUF			(1 << 3)
 #define	SUME_MSI_TXDONE			(1 << 4)
+
+/* Invalid vector. */
+#define	SUME_INVALID_VECT		0xc0000000
 
 #define	SUME_DPORT_MASK			0xaa
 

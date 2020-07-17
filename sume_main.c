@@ -213,8 +213,8 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	struct ifnet *ifp = NULL;
 	int np;
 	uint16_t sport, dport, plen, magic;
-	uint8_t *indata = (uint8_t *) adapter->recv[i]->buf_addr + sizeof(struct
-		nf_bb_desc);
+	uint8_t *indata = (uint8_t *) adapter->recv[i]->buf_addr +
+	    sizeof(struct nf_bb_desc);
 	device_t dev = adapter->dev;
 	struct nf_metadata *mdata = (struct nf_metadata *) indata;
 
@@ -441,13 +441,13 @@ sume_intr_handler(void *arg)
 	SUME_LOCK(adapter);
 
 	vect0 = read_reg(adapter, RIFFA_IRQ_REG0_OFF);
-	if((vect0 & 0xC0000000) != 0) {
+	if ((vect0 & SUME_INVALID_VECT) != 0) {
 		SUME_UNLOCK(adapter);
 		return;
 	}
 	if (adapter->num_chnls > 6) {
 		vect1 = read_reg(adapter, RIFFA_IRQ_REG1_OFF);
-		if((vect1 & 0xC0000000) != 0) {
+		if ((vect1 & SUME_INVALID_VECT) != 0) {
 			SUME_UNLOCK(adapter);
 			return;
 		}
@@ -1432,7 +1432,7 @@ sume_sysctl_init(struct sume_adapter *adapter)
 	tree = SYSCTL_ADD_NODE(ctx, SYSCTL_STATIC_CHILDREN(_dev),
 	    OID_AUTO, "sume", CTLFLAG_RW, 0, "SUME top-level tree");
 	if (tree == NULL) {
-		printf("SYSCTL_ADD_NODE failed.\n");
+		device_printf(dev, "SYSCTL_ADD_NODE failed.\n");
 		return;
 	}
 	SYSCTL_ADD_INT(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
@@ -1444,7 +1444,7 @@ sume_sysctl_init(struct sume_adapter *adapter)
 	SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tree), OID_AUTO, "rx_ebytes",
 	    CTLFLAG_RD, &adapter->bytes_err, 0, "rx errors");
 
-#define IFC_NAME_LEN 4
+#define	IFC_NAME_LEN 4
 	char namebuf[IFC_NAME_LEN];
 
 	for (i = sume_nports-1; i >= 0; i--) {
@@ -1458,7 +1458,7 @@ sume_sysctl_init(struct sume_adapter *adapter)
 		tmp_tree = SYSCTL_ADD_NODE(ctx, SYSCTL_CHILDREN(tree),
 		    OID_AUTO, namebuf, CTLFLAG_RW, 0, "SUME ifc tree");
 		if (tmp_tree == NULL) {
-			printf("SYSCTL_ADD_NODE failed.\n");
+			device_printf(dev, "SYSCTL_ADD_NODE failed.\n");
 			return;
 		}
 
@@ -1587,7 +1587,8 @@ sume_detach(device_t dev)
 	int i;
 	struct nf_priv *nf_priv;
 
-	KASSERT(mtx_initialized(&adapter->lock), ("SUME mutex not initialized"));
+	KASSERT(mtx_initialized(&adapter->lock), ("SUME mutex not "
+	    "initialized"));
 	atomic_set_int(&adapter->running, 0);
 
 	for (i = 0; i < sume_nports; i++) {
