@@ -280,128 +280,6 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 }
 
 /*
- * Packet to transmit. We take the packet data from the mbuf and copy it to the
- * bouncebuffer address buf_addr+3*sizeof(uint32_t)+16. The 16 bytes before the
- * packet data are for metadata: sport/dport (depending on our source
- * interface), packet length and magic 0xcafe. We tell the SUME about the
- * transfer, fill the first 3*sizeof(uint32_t) bytes of the bouncebuffer with
- * the informaton about the start and length of the packet and trigger the
- * transaction.
- */
-static int
-sume_start_xmit(struct ifnet *ifp, struct mbuf *m)
-{
-	struct sume_adapter *adapter;
-	struct nf_priv *nf_priv;
-	uint8_t *outbuf;
-	int error, i, last, offset;
-	device_t dev;
-	struct nf_metadata *mdata;
-	int padlen = SUME_MIN_PKT_SIZE;
-
-	nf_priv = ifp->if_softc;
-	adapter = nf_priv->adapter;
-	i = nf_priv->riffa_channel;
-	dev = adapter->dev;
-
-	/* Packets large enough do not need to be padded */
-	if (m->m_pkthdr.len > SUME_MIN_PKT_SIZE)
-		padlen = m->m_pkthdr.len;
-
-	if (sume_debug)
-		printf("Sending %d bytes to nf%d\n", padlen, nf_priv->port);
-	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
-
-	outbuf = (uint8_t *) adapter->send[i]->buf_addr + sizeof(struct
-		nf_bb_desc);
-	mdata = (struct nf_metadata *) outbuf;
-
-	/*
-	 * Check state. It's the best we can do for now.
-	 */
-	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
-		device_printf(dev, "%s: SUME not in IDLE state (state %d)\n",
-		    __func__, adapter->send[i]->state);
-		return (EBUSY);
-	}
-
-	/* Clear the recovery flag. */
-	adapter->send[i]->flags &= ~SUME_CHAN_STATE_RECOVERY_FLAG;
-
-	/* Make sure we fit with the 16 bytes nf_metadata. */
-	if ((m->m_pkthdr.len + sizeof(struct nf_metadata)) >
-	    adapter->sg_buf_size) {
-		device_printf(dev, "%s: Packet too big for bounce buffer "
-		    "(%d)\n", __func__, m->m_pkthdr.len);
-		m_freem(m);
-		nf_priv->stats.tx_dropped++;
-		return (ENOMEM);
-	}
-
-	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
-	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
-
-	/* Zero out the padded data */
-	bzero(outbuf + sizeof(struct nf_metadata), SUME_MIN_PKT_SIZE);
-	/* Skip the first 16 bytes for the metadata. */
-	m_copydata(m, 0, m->m_pkthdr.len, outbuf + sizeof(struct nf_metadata));
-	adapter->send[i]->len = sizeof(struct nf_metadata) / 4;	/* words */
-	adapter->send[i]->len += (padlen / 4) +
-	    ((padlen % 4 == 0) ? 0 : 1);
-
-	/* Fill in the metadata. */
-	mdata->sport = htole16(
-	    1 << (nf_priv->port * 2 + 1)); /* CPU(DMA) ports are odd. */
-	mdata->dport = htole16(
-	    1 << (nf_priv->port * 2)); /* MAC ports are even. */
-	mdata->plen = htole16(padlen);
-	mdata->magic = htole16(SUME_RIFFA_MAGIC);
-	mdata->t1 = htole32(0);
-	mdata->t2 = htole32(0);
-
-	/* Let the FPGA know about the transfer. */
-	offset = 0;
-	last = 1;
-	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_OFFLAST_REG_OFF),
-	    ((offset << 1) | (last & 0x01)));
-	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_LEN_REG_OFF),
-	    adapter->send[i]->len);		/* words */
-
-	/* Fill the bouncebuf "descriptor". */
-	error = sume_fill_bb_desc(adapter,
-	    adapter->send[i], SUME_RIFFA_LEN(adapter->send[i]->len));
-	if (error) {
-		device_printf(dev, "%s: failed to fill the bouncebuffer "
-		    "descriptor\n", __func__);
-		nf_priv->stats.tx_dropped++;
-		return (ENOMEM);
-	}
-
-	/* Update the state before intiating the DMA to avoid races. */
-	adapter->send[i]->state = SUME_RIFFA_CHAN_STATE_READY;
-
-	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
-	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
-	/* DMA. */
-	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_LO_REG_OFF),
-	    SUME_RIFFA_LO_ADDR(adapter->send[i]->buf_hw_addr));
-	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_HI_REG_OFF),
-	    SUME_RIFFA_HI_ADDR(adapter->send[i]->buf_hw_addr));
-	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_LEN_REG_OFF),
-	    4 * adapter->send[i]->num_sg);
-
-	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
-	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
-
-	/* We can free as long as we use the bounce buffer. */
-	nf_priv->stats.tx_packets++;
-	nf_priv->stats.tx_bytes += padlen;
-	m_freem(m);
-
-	return (0);
-}
-
-/*
  * SUME interrupt handler for when we get a valid interrupt from the board.
  * There are 2 interrupt vectors, we use vect0 when the number of channels is
  * lower then 7 and vect1 otherwise. Theoretically, we can receive interrupt
@@ -1208,25 +1086,127 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 	return;
 }
 
+/*
+ * Packet to transmit. We take the packet data from the mbuf and copy it to the
+ * bouncebuffer address buf_addr+3*sizeof(uint32_t)+16. The 16 bytes before the
+ * packet data are for metadata: sport/dport (depending on our source
+ * interface), packet length and magic 0xcafe. We tell the SUME about the
+ * transfer, fill the first 3*sizeof(uint32_t) bytes of the bouncebuffer with
+ * the informaton about the start and length of the packet and trigger the
+ * transaction.
+ */
 static int
 sume_if_start_locked(struct ifnet *ifp)
 {
 	struct mbuf *m;
 	struct nf_priv *nf_priv = ifp->if_softc;
 	struct sume_adapter *adapter = nf_priv->adapter;
+	uint8_t *outbuf;
+	int error, i, last, offset;
+	device_t dev;
+	struct nf_metadata *mdata;
+	int padlen = SUME_MIN_PKT_SIZE;
 
 	IFQ_DRV_DEQUEUE(&ifp->if_snd, m);
 	if (m == NULL)
-		return (1);
-	/*
-	*  Failed xmit means we need to try again later so requeue.
-	*/
-	if (sume_start_xmit(ifp, m)) {
-		if (m != NULL)
-			IFQ_DRV_PREPEND(&ifp->if_snd, m);
+		return (EINVAL);
+
+	i = nf_priv->riffa_channel;
+	dev = adapter->dev;
+
+	/* Packets large enough do not need to be padded */
+	if (m->m_pkthdr.len > SUME_MIN_PKT_SIZE)
+		padlen = m->m_pkthdr.len;
+
+	if (sume_debug)
+		printf("Sending %d bytes to nf%d\n", padlen, nf_priv->port);
+	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
+
+	outbuf = (uint8_t *) adapter->send[i]->buf_addr + sizeof(struct
+		nf_bb_desc);
+	mdata = (struct nf_metadata *) outbuf;
+
+	KASSERT(adapter->send[i]->state == SUME_RIFFA_CHAN_STATE_IDLE,
+	    ("SUME not in IDLE state"));
+
+	/* Clear the recovery flag. */
+	adapter->send[i]->flags &= ~SUME_CHAN_STATE_RECOVERY_FLAG;
+
+	/* Make sure we fit with the 16 bytes nf_metadata. */
+	if ((m->m_pkthdr.len + sizeof(struct nf_metadata)) >
+	    adapter->sg_buf_size) {
+		device_printf(dev, "%s: Packet too big for bounce buffer "
+		    "(%d)\n", __func__, m->m_pkthdr.len);
+		m_freem(m);
+		nf_priv->stats.tx_dropped++;
+		return (ENOMEM);
 	}
 
+	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
+	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+
+	/* Zero out the padded data */
+	bzero(outbuf + sizeof(struct nf_metadata), SUME_MIN_PKT_SIZE);
+	/* Skip the first 16 bytes for the metadata. */
+	m_copydata(m, 0, m->m_pkthdr.len, outbuf + sizeof(struct nf_metadata));
+	adapter->send[i]->len = sizeof(struct nf_metadata) / 4;	/* words */
+	adapter->send[i]->len += (padlen / 4) +
+	    ((padlen % 4 == 0) ? 0 : 1);
+
+	/* Fill in the metadata. */
+	mdata->sport = htole16(
+	    1 << (nf_priv->port * 2 + 1)); /* CPU(DMA) ports are odd. */
+	mdata->dport = htole16(
+	    1 << (nf_priv->port * 2)); /* MAC ports are even. */
+	mdata->plen = htole16(padlen);
+	mdata->magic = htole16(SUME_RIFFA_MAGIC);
+	mdata->t1 = htole32(0);
+	mdata->t2 = htole32(0);
+
+	/* Let the FPGA know about the transfer. */
+	offset = 0;
+	last = 1;
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_OFFLAST_REG_OFF),
+	    ((offset << 1) | (last & 0x01)));
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_LEN_REG_OFF),
+	    adapter->send[i]->len);		/* words */
+
+	/* Fill the bouncebuf "descriptor". */
+	error = sume_fill_bb_desc(adapter,
+	    adapter->send[i], SUME_RIFFA_LEN(adapter->send[i]->len));
+	if (error) {
+		device_printf(dev, "%s: failed to fill the bouncebuffer "
+		    "descriptor\n", __func__);
+		/*
+		*  Failed xmit means we need to try again later so requeue.
+		*/
+		IFQ_DRV_PREPEND(&ifp->if_snd, m);
+		return (ENOMEM);
+	}
+
+	/* Update the state before intiating the DMA to avoid races. */
+	adapter->send[i]->state = SUME_RIFFA_CHAN_STATE_READY;
+
+	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
+	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	/* DMA. */
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_LO_REG_OFF),
+	    SUME_RIFFA_LO_ADDR(adapter->send[i]->buf_hw_addr));
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_HI_REG_OFF),
+	    SUME_RIFFA_HI_ADDR(adapter->send[i]->buf_hw_addr));
+	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_LEN_REG_OFF),
+	    4 * adapter->send[i]->num_sg);
+
+	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
+	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+
+	/* We can free as long as we use the bounce buffer. */
+	nf_priv->stats.tx_packets++;
+	nf_priv->stats.tx_bytes += padlen;
+	m_freem(m);
+
 	adapter->last_ifc = nf_priv->port;
+
 	return (0);
 }
 
