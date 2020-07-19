@@ -1015,6 +1015,16 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 		ether_ioctl(ifp, cmd, data);
 		break;
 
+	case SIOCSIFMTU:
+		if (ifr->ifr_mtu < ETHERMIN || ifr->ifr_mtu > ETHERMTU)
+			error = EINVAL;
+		else if (ifp->if_mtu != ifr->ifr_mtu) {
+			SUME_LOCK(adapter);
+			if_setmtu(ifp, ifr->ifr_mtu);
+			SUME_UNLOCK(adapter);
+		}
+		break;
+
 	case SUME_IOCTL_CMD_WRITE_REG:
 		error = copyin(ifr_data_get_ptr(ifr), &sifr, sizeof(sifr));
 		if (error) {
