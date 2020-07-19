@@ -1589,7 +1589,6 @@ sume_detach(device_t dev)
 			if (nf_priv->port_up)
 				if_down(adapter->ifp[i]);
 			ifmedia_removeall(&nf_priv->media);
-			ifmedia_removeall(&nf_priv->media);
 			free(nf_priv, M_SUME);
 		}
 
