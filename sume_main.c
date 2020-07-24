@@ -82,60 +82,72 @@ static driver_t sume_driver = {
 };
 
 /*
-* The DMA engine for SUME generates interrupts for each RX/TX transaction.
-* Depending on the channel (0 if packet transaction, 1 if register transaction)
-* the used bits of the interrupt vector will be the lowest or the second lowest
-* 5 bits.
-*
-* When receiving packets from SUME (RX):
-* (1) SUME received a packet on one of the interfaces.
-* (2) SUME generates an interrupt vector, bit 00001 is set (channel 0 - new RX
-*     transaction).
-* (3) We read the length of the incoming packet and the offset (is offset even
-*     used for anything except checking boundaries?) along with the 'last' flag
-*     from the SUME registers.
-* (4) We prepare for the DMA transaction by setting the bouncebuffer on the
-*     address buf_addr. For now, this is how it's done:
-*     - First 3*sizeof(uint32_t) bytes are: lower and upper 32 bits of physical
-*     address where we want the data to arrive (buf_addr[0] and buf_addr[1]),
-*     and length of incoming data (buf_addr[2]).
-*     - Data will start right after, at buf_addr+3*sizeof(uint32_t). The
-*     physical address buf_hw_addr is a block of contiguous memory mapped to
-*     buf_addr, so we can set the incoming data's physical address (buf_addr[0]
-*     and buf_addr[1]) to buf_hw_addr+3*sizeof(uint32_t).
-* (5) We notify SUME that the bouncebuffer is ready for the transaction by
-*     writing the lower/upper physical address buf_hw_addr to the SUME
-*     registers RIFFA_TX_SG_ADDR_LO_REG_OFF and RIFFA_TX_SG_ADDR_HI_REG_OFF as
-*     well as the number of segments to the register RIFFA_TX_SG_LEN_REG_OFF.
-* (6) SUME generates an interrupt vector, bit 00010 is set (channel 0 -
-*     bouncebuffer received).
-* (7) SUME generates an interrupt vector, bit 00100 is set (channel 0 -
-*     transaction is done).
-* (8) We read the first 16 bytes (metadata) of the received data and note the
-*     incoming interface so we can later forward it to the right one in the OS
-*     (nf0, nf1, nf2 or nf3).
-* (9) We create an mbuf and copy the data from the bouncebuffer to the mbuf and
-*     set the mbuf rcvif to the incoming interface.
-* (10) We forward the mbuf to the appropriate interface via ifp->if_input.
-*
-* When sending packets to SUME (TX):
-* (1) The OS calls sume_start_xmit() function on TX.
-* (2) We get the mbuf packet data and copy it to the
-*     buf_addr+3*sizeof(uint32_t) + metadata 16 bytes.
-* (3) We create the metadata based on the output interface and copy it to the
-*     buf_addr+3*sizeof(uint32_t).
-* (4) We write the offset/last and length of the packet to the SUME registers
-*     RIFFA_RX_OFFLAST_REG_OFF and RIFFA_RX_LEN_REG_OFF.
-* (5) We fill the bouncebuffer by filling the first 3*sizeof(uint32_t) bytes
-*     with the physical address and length just as in RX step (4).
-* (6) We notify SUME that the bouncebuffer is ready by writing to SUME
-*     registers RIFFA_RX_SG_ADDR_LO_REG_OFF, RIFFA_RX_SG_ADDR_HI_REG_OFF and
-*     RIFFA_RX_SG_LEN_REG_OFF just as in RX step (5).
-* (7) SUME generates an interrupt vector, bit 01000 is set (channel 0 -
-*     bouncebuffer is read).
-* (8) SUME generates an interrupt vector, bit 10000 is set (channel 0 -
-*     transaction is done).
-*/
+ * The DMA engine for SUME generates interrupts for each RX/TX transaction.
+ * Depending on the channel (0 if packet transaction, 1 if register transaction)
+ * the used bits of the interrupt vector will be the lowest or the second lowest
+ * 5 bits.
+ *
+ * When receiving packets from SUME (RX):
+ * (1) SUME received a packet on one of the interfaces.
+ * (2) SUME generates an interrupt vector, bit 00001 is set (channel 0 - new RX
+ *     transaction).
+ * (3) We read the length of the incoming packet and the offset (is offset even
+ *     used for anything except checking boundaries?) along with the 'last' flag
+ *     from the SUME registers.
+ * (4) We prepare for the DMA transaction by setting the bouncebuffer on the
+ *     address buf_addr. For now, this is how it's done:
+ *     - First 3*sizeof(uint32_t) bytes are: lower and upper 32 bits of physical
+ *     address where we want the data to arrive (buf_addr[0] and buf_addr[1]),
+ *     and length of incoming data (buf_addr[2]).
+ *     - Data will start right after, at buf_addr+3*sizeof(uint32_t). The
+ *     physical address buf_hw_addr is a block of contiguous memory mapped to
+ *     buf_addr, so we can set the incoming data's physical address (buf_addr[0]
+ *     and buf_addr[1]) to buf_hw_addr+3*sizeof(uint32_t).
+ * (5) We notify SUME that the bouncebuffer is ready for the transaction by
+ *     writing the lower/upper physical address buf_hw_addr to the SUME
+ *     registers RIFFA_TX_SG_ADDR_LO_REG_OFF and RIFFA_TX_SG_ADDR_HI_REG_OFF as
+ *     well as the number of segments to the register RIFFA_TX_SG_LEN_REG_OFF.
+ * (6) SUME generates an interrupt vector, bit 00010 is set (channel 0 -
+ *     bouncebuffer received).
+ * (7) SUME generates an interrupt vector, bit 00100 is set (channel 0 -
+ *     transaction is done).
+ * (8) We read the first 16 bytes (metadata) of the received data and note the
+ *     incoming interface so we can later forward it to the right one in the OS
+ *     (nf0, nf1, nf2 or nf3).
+ * (9) We create an mbuf and copy the data from the bouncebuffer to the mbuf and
+ *     set the mbuf rcvif to the incoming interface.
+ * (10) We forward the mbuf to the appropriate interface via ifp->if_input.
+ *
+ * When sending packets to SUME (TX):
+ * (1) The OS calls sume_start_xmit() function on TX.
+ * (2) We get the mbuf packet data and copy it to the
+ *     buf_addr+3*sizeof(uint32_t) + metadata 16 bytes.
+ * (3) We create the metadata based on the output interface and copy it to the
+ *     buf_addr+3*sizeof(uint32_t).
+ * (4) We write the offset/last and length of the packet to the SUME registers
+ *     RIFFA_RX_OFFLAST_REG_OFF and RIFFA_RX_LEN_REG_OFF.
+ * (5) We fill the bouncebuffer by filling the first 3*sizeof(uint32_t) bytes
+ *     with the physical address and length just as in RX step (4).
+ * (6) We notify SUME that the bouncebuffer is ready by writing to SUME
+ *     registers RIFFA_RX_SG_ADDR_LO_REG_OFF, RIFFA_RX_SG_ADDR_HI_REG_OFF and
+ *     RIFFA_RX_SG_LEN_REG_OFF just as in RX step (5).
+ * (7) SUME generates an interrupt vector, bit 01000 is set (channel 0 -
+ *     bouncebuffer is read).
+ * (8) SUME generates an interrupt vector, bit 10000 is set (channel 0 -
+ *     transaction is done).
+ *
+ * Internal registers
+ * Every module in the SUME hardware has its own set of internal registers
+ * (IDs, for debugging and statistic purposes, etc.). Their base addresses are
+ * defined in 'projects/reference_nic/hw/tcl/reference_nic_defines.tcl' and the
+ * offsets to different memory locations of every module are defined in their
+ * corresponding folder inside the library. These registers can be RO/RW and
+ * there is a special method to fetch/change this data over 1 or 2 DMA
+ * transactions. For writing, by calling the sume_module_reg_write(). For
+ * reading, by calling the sume_module_reg_write() and then
+ * sume_module_reg_read(). Check those functions for more information.
+ *
+ */
 
 MALLOC_DECLARE(M_SUME);
 MALLOC_DEFINE(M_SUME, "sume", "NetFPGA SUME device driver");
@@ -152,9 +164,9 @@ static void sume_fill_bb_desc(struct sume_adapter *,
 static void check_queues(struct sume_adapter *);
 static inline uint32_t read_reg(struct sume_adapter *, int);
 static inline void write_reg(struct sume_adapter *, int, uint32_t);
-static int sume_initiate_reg_write(struct nf_priv *, struct sume_ifreq *,
+static int sume_module_reg_write(struct nf_priv *, struct sume_ifreq *,
     uint32_t strb);
-static int sume_read_reg_result(struct nf_priv *, struct sume_ifreq *);
+static int sume_module_reg_read(struct nf_priv *, struct sume_ifreq *);
 
 static int sume_debug;
 
@@ -764,7 +776,7 @@ sume_fill_bb_desc(struct sume_adapter *adapter, struct riffa_chnl_dir *p,
 
 /* Register read/write. */
 static int
-sume_reg_wr_locked(struct sume_adapter *adapter, int i)
+sume_modreg_write_locked(struct sume_adapter *adapter, int i)
 {
 	int last, offset;
 
@@ -805,7 +817,7 @@ sume_reg_wr_locked(struct sume_adapter *adapter, int i)
  * address and the result will need to be DMAed back.
  */
 static int
-sume_initiate_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
+sume_module_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
     uint32_t strb)
 {
 	struct sume_adapter *adapter;
@@ -838,7 +850,7 @@ sume_initiate_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 	data->strb = htole32(strb);
 	adapter->send[i]->len = 4;	/* words */
 
-	error = sume_reg_wr_locked(adapter, i);
+	error = sume_modreg_write_locked(adapter, i);
 	if (error) {
 		SUME_UNLOCK(adapter);
 		return (EFAULT);
@@ -874,7 +886,7 @@ sume_initiate_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 }
 
 static int
-sume_read_reg_result(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
+sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 {
 	struct sume_adapter *adapter;
 	struct nf_regop_data *data;
@@ -974,7 +986,7 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 			error = EINVAL;
 			break;
 		}
-		error = sume_initiate_reg_write(nf_priv, &sifr, 0x1f);
+		error = sume_module_reg_write(nf_priv, &sifr, 0x1f);
 		break;
 
 	case SUME_IOCTL_CMD_READ_REG:
@@ -984,11 +996,11 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 			break;
 		}
 
-		error = sume_initiate_reg_write(nf_priv, &sifr, 0x00);
+		error = sume_module_reg_write(nf_priv, &sifr, 0x00);
 		if (error)
 			break;
 
-		error = sume_read_reg_result(nf_priv, &sifr);
+		error = sume_module_reg_read(nf_priv, &sifr);
 		if (error)
 			break;
 
@@ -1047,11 +1059,11 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 	sifr.addr = SUME_NF_LINK_STATUS_ADDR(nf_priv->port);
 	sifr.val = 0;
 
-	error = sume_initiate_reg_write(nf_priv, &sifr, 0x00);
+	error = sume_module_reg_write(nf_priv, &sifr, 0x00);
 	if (error)
 		return;
 
-	error = sume_read_reg_result(nf_priv, &sifr);
+	error = sume_module_reg_read(nf_priv, &sifr);
 	if (error)
 		return;
 
@@ -1069,7 +1081,7 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
  * packet data are for metadata: sport/dport (depending on our source
  * interface), packet length and magic 0xcafe. We tell the SUME about the
  * transfer, fill the first 3*sizeof(uint32_t) bytes of the bouncebuffer with
- * the informaton about the start and length of the packet and trigger the
+ * the information about the start and length of the packet and trigger the
  * transaction.
  */
 static int
