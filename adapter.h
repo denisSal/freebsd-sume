@@ -147,7 +147,6 @@ struct nf_priv {
 	struct sume_adapter	*adapter;
 	struct ifnet		*ifp;
 	uint32_t		port;
-	uint32_t		port_up;
 	uint32_t		riffa_channel;
 	struct ifmedia		media;
 	struct nf_stats		stats;

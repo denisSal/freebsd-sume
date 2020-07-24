@@ -255,7 +255,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 
 	/* If the interface is down, well, we are done. */
 	nf_priv = ifp->if_softc;
-	if (nf_priv->port_up == 0) {
+	if (!(ifp->if_flags & IFF_UP)) {
 		if (sume_debug)
 			device_printf(dev, "Device nf%d not up.\n", np);
 		adapter->packets_err++;
@@ -746,38 +746,11 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 
 }
 
-static void
-sume_if_down(struct nf_priv *nf_priv)
-{
-
-	if (!nf_priv->port_up)
-		return; /* Already down. */
-
-	nf_priv->port_up = 0;
-
-	printf("SUME nf%d down.\n", nf_priv->port);
-}
-
-static void
-sume_if_init_locked(struct nf_priv *nf_priv)
-{
-
-	if (nf_priv->port_up)
-		return; /* Already up. */
-
-	nf_priv->port_up = 1;
-
-	printf("SUME nf%d up.\n", nf_priv->port);
-}
-
+/* If there is no sume_if_init, the ether_ioctl panics. */
 static void
 sume_if_init(void *sc)
 {
-	struct nf_priv *nf_priv = sc;
 
-	SUME_LOCK(nf_priv->adapter);
-	sume_if_init_locked(nf_priv);
-	SUME_UNLOCK(nf_priv->adapter);
 }
 
 /* Helper functions. */
@@ -993,18 +966,6 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 	adapter = nf_priv->adapter;
 
 	switch (cmd) {
-	case SIOCSIFFLAGS:
-		if (atomic_load_int(&adapter->running) == 0)
-			break;
-		SUME_LOCK(adapter);
-		if (ifp->if_flags & IFF_UP) {
-			if (ifp->if_drv_flags & IFF_DRV_RUNNING)
-				sume_if_init_locked(nf_priv);
-		} else if (ifp->if_drv_flags & IFF_DRV_RUNNING)
-			sume_if_down(nf_priv);
-		SUME_UNLOCK(adapter);
-		break;
-
 	case SIOCGIFXMEDIA:
 		if (atomic_load_int(&adapter->running) == 0)
 			break;
@@ -1092,7 +1053,7 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 	int link_status = 0;
 
 	if (ifm->ifm_cur->ifm_media == (IFM_ETHER | IFM_10G_SR) &&
-	    nf_priv->port_up)
+	    (ifp->if_flags & IFF_UP))
 		ifmr->ifm_active = IFM_ETHER | IFM_10G_SR;
 	else
 		ifmr->ifm_active = ifm->ifm_cur->ifm_media;
@@ -1252,7 +1213,7 @@ sume_if_start(struct ifnet *ifp)
 	if ((ifp->if_drv_flags & (IFF_DRV_RUNNING | IFF_DRV_OACTIVE)) !=
 	    IFF_DRV_RUNNING)
 		return;
-	if (!nf_priv->port_up)
+	if (!(ifp->if_flags & IFF_UP))
 		return;
 
 	SUME_LOCK(adapter);
@@ -1603,18 +1564,19 @@ sume_detach(device_t dev)
 	atomic_set_int(&adapter->running, 0);
 
 	for (i = 0; i < sume_nports; i++) {
-		if (adapter->ifp[i] == NULL)
+		struct ifnet *ifp = adapter->ifp[i];
+		if (ifp == NULL)
 			continue;
 
-		nf_priv = adapter->ifp[i]->if_softc;
+		nf_priv = ifp->if_softc;
 		if (nf_priv != NULL) {
-			if (nf_priv->port_up)
-				if_down(adapter->ifp[i]);
+			if (ifp->if_flags & IFF_UP)
+				if_down(ifp);
 			ifmedia_removeall(&nf_priv->media);
 			free(nf_priv, M_SUME);
 		}
 
-		ether_ifdetach(adapter->ifp[i]);
+		ether_ifdetach(ifp);
 	}
 
 	sume_remove_riffa_buffers(adapter);
