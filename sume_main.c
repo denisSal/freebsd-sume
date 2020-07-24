@@ -1219,9 +1219,18 @@ check_queues(struct sume_adapter *adapter)
 	last = adapter->last_ifc;
 
 	/* Check all interfaces */
-	for (i = last+1; i < last + sume_nports + 1; i++)
-		if (!sume_if_start_locked(adapter->ifp[i % sume_nports]))
+	for (i = last+1; i < last + sume_nports + 1; i++) {
+		struct ifnet *ifp = adapter->ifp[i %sume_nports];
+
+		if ((ifp->if_drv_flags & (IFF_DRV_RUNNING | IFF_DRV_OACTIVE)) !=
+		    IFF_DRV_RUNNING)
+			continue;
+		if (!(ifp->if_flags & IFF_UP))
+			continue;
+
+		if (!sume_if_start_locked(ifp))
 			break;
+	}
 }
 
 static int
