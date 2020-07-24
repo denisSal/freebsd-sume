@@ -104,6 +104,8 @@
 
 #define	SUME_MIN_PKT_SIZE		(ETHER_MIN_LEN - ETHER_CRC_LEN)
 
+#define	SUME_NF_LINK_STATUS_ADDR(port)	(0x44040048 + port * 0x10000)
+
 struct irq {
 	struct resource		*res;
 	uint32_t		rid;

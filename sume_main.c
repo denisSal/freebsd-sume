@@ -152,6 +152,9 @@ static int sume_fill_bb_desc(struct sume_adapter *,
 static void check_queues(struct sume_adapter *);
 static inline uint32_t read_reg(struct sume_adapter *, int);
 static inline void write_reg(struct sume_adapter *, int, uint32_t);
+static int sume_initiate_reg_write(struct nf_priv *, struct sume_ifreq *,
+    uint32_t strb);
+static int sume_read_reg_result(struct nf_priv *, struct sume_ifreq *);
 
 static int sume_debug;
 
@@ -1084,6 +1087,9 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 {
 	struct nf_priv *nf_priv = ifp->if_softc;
 	struct ifmedia *ifm = &nf_priv->media;
+	struct sume_ifreq sifr;
+	int error;
+	int link_status = 0;
 
 	if (ifm->ifm_cur->ifm_media == (IFM_ETHER | IFM_10G_SR) &&
 	    nf_priv->port_up)
@@ -1091,7 +1097,23 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 	else
 		ifmr->ifm_active = ifm->ifm_cur->ifm_media;
 
-	ifmr->ifm_status |= IFM_ACTIVE;
+	ifmr->ifm_status |= IFM_AVALID;
+
+	sifr.addr = SUME_NF_LINK_STATUS_ADDR(nf_priv->port);
+	sifr.val = 0;
+
+	error = sume_initiate_reg_write(nf_priv, &sifr, 0x00);
+	if (error)
+		return;
+
+	error = sume_read_reg_result(nf_priv, &sifr);
+	if (error)
+		return;
+
+	link_status = (sifr.val >> 12) & 0x1;
+	if (link_status) {
+		ifmr->ifm_status |= IFM_ACTIVE;
+	}
 
 	return;
 }
