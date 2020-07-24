@@ -946,23 +946,24 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 	int error = 0;
 	struct sume_adapter *adapter;
 
+	if (ifp == NULL)
+		return (ENODEV);
+
 	nf_priv = ifp->if_softc;
 	if (nf_priv == NULL || nf_priv->adapter == NULL)
 		return (EINVAL);
 
 	adapter = nf_priv->adapter;
+	if (atomic_load_int(&adapter->running) == 0)
+		return (ENODEV);
 
 	switch (cmd) {
 	case SIOCGIFXMEDIA:
-		if (atomic_load_int(&adapter->running) == 0)
-			break;
 		ifmedia_ioctl(ifp, ifr, &nf_priv->media, cmd);
 		break;
 
 	case SIOCSIFADDR:
 	case SIOCAIFADDR:
-		if (atomic_load_int(&adapter->running) == 0)
-			break;
 		ether_ioctl(ifp, cmd, data);
 		break;
 
@@ -1546,15 +1547,19 @@ sume_detach(device_t dev)
 		if (ifp == NULL)
 			continue;
 
+		ifp->if_drv_flags &= ~(IFF_DRV_RUNNING | IFF_DRV_OACTIVE);
 		nf_priv = ifp->if_softc;
 		if (nf_priv != NULL) {
 			if (ifp->if_flags & IFF_UP)
 				if_down(ifp);
 			ifmedia_removeall(&nf_priv->media);
-			free(nf_priv, M_SUME);
 		}
 
+		ifp->if_flags &= ~IFF_UP;
 		ether_ifdetach(ifp);
+
+		if (nf_priv != NULL)
+			free(nf_priv, M_SUME);
 	}
 
 	sume_remove_riffa_buffers(adapter);
