@@ -959,22 +959,13 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 
 	switch (cmd) {
 	case SIOCGIFXMEDIA:
-		ifmedia_ioctl(ifp, ifr, &nf_priv->media, cmd);
-		break;
-
-	case SIOCSIFADDR:
-	case SIOCAIFADDR:
-		ether_ioctl(ifp, cmd, data);
+		error = ifmedia_ioctl(ifp, ifr, &nf_priv->media, cmd);
 		break;
 
 	case SIOCSIFMTU:
-		if (ifr->ifr_mtu < ETHERMIN || ifr->ifr_mtu > ETHERMTU)
-			error = EINVAL;
-		else if (ifp->if_mtu != ifr->ifr_mtu) {
-			SUME_LOCK(adapter);
-			if_setmtu(ifp, ifr->ifr_mtu);
-			SUME_UNLOCK(adapter);
-		}
+	case SIOCSIFADDR:
+	case SIOCAIFADDR:
+		error = ether_ioctl(ifp, cmd, data);
 		break;
 
 	case SUME_IOCTL_CMD_WRITE_REG:
@@ -1006,6 +997,11 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 			error = EINVAL;
 
 		break;
+
+	case SIOCSIFFLAGS:
+		/* Silence tcpdump 'promisc mode not supported' warning. */
+		if (ifp->if_flags & IFF_PROMISC)
+			break;
 
 	default:
 		error = ENOTSUP;
