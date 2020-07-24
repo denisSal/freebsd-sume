@@ -147,7 +147,7 @@ static int mod_event(module_t, int, void *);
 void sume_intr_handler(void *);
 static int sume_intr_filter(void *);
 static int sume_if_ioctl(struct ifnet *, unsigned long, caddr_t);
-static int sume_fill_bb_desc(struct sume_adapter *,
+static void sume_fill_bb_desc(struct sume_adapter *,
     struct riffa_chnl_dir *, uint64_t);
 static void check_queues(struct sume_adapter *);
 static inline uint32_t read_reg(struct sume_adapter *, int);
@@ -323,7 +323,7 @@ sume_intr_handler(void *arg)
 {
 	struct sume_adapter *adapter = arg;
 	uint32_t vect, vect0, vect1, len;
-	int i, error, loops;
+	int i, loops;
 	device_t dev = adapter->dev;
 	struct mbuf *m = NULL;
 	struct ifnet *ifp = NULL;
@@ -479,15 +479,10 @@ sume_intr_handler(void *arg)
 					}
 
 					/* Fill the bouncebuf "descriptor". */
-					error = sume_fill_bb_desc(adapter,
+					sume_fill_bb_desc(adapter,
 					    adapter->recv[i], SUME_RIFFA_LEN(
 					    adapter->recv[i]->len));
-					if (error != 0) {
-						device_printf(dev, "%s: "
-						    "Failed to build the "
-						    "bouncebuffer descriptor."
-						    "\n", __func__);
-					}
+
 					bus_dmamap_sync(
 					    adapter->recv[i]->my_tag,
 					    adapter->recv[i]->my_map,
@@ -754,7 +749,7 @@ sume_if_init(void *sc)
 }
 
 /* Helper functions. */
-static int
+static void
 sume_fill_bb_desc(struct sume_adapter *adapter, struct riffa_chnl_dir *p,
     uint64_t len)
 {
@@ -765,16 +760,13 @@ sume_fill_bb_desc(struct sume_adapter *adapter, struct riffa_chnl_dir *p,
 	bouncebuf->len = len >> 2;
 
 	p->num_sg = 1;
-
-	return (0);
 }
 
 /* Register read/write. */
 static int
 sume_reg_wr_locked(struct sume_adapter *adapter, int i)
 {
-	int error, last, offset;
-	device_t dev = adapter->dev;
+	int last, offset;
 
 	/* Let the FPGA know about the transfer. */
 	offset = 0;
@@ -785,13 +777,8 @@ sume_reg_wr_locked(struct sume_adapter *adapter, int i)
 	    adapter->send[i]->len);	/* words */
 
 	/* Fill the bouncebuf "descriptor". */
-	error = sume_fill_bb_desc(adapter, adapter->send[i],
+	sume_fill_bb_desc(adapter, adapter->send[i],
 	    SUME_RIFFA_LEN(adapter->send[i]->len));
-	if (error != 0) {
-		device_printf(dev, "%s: failed to fill the bouncebuffer "
-		    "descriptor\n", __func__);
-		return (EFAULT);
-	}
 
 	/* Update the state before intiating the DMA to avoid races. */
 	adapter->send[i]->state = SUME_RIFFA_CHAN_STATE_READY;
@@ -1095,7 +1082,7 @@ sume_if_start_locked(struct ifnet *ifp)
 	struct nf_priv *nf_priv = ifp->if_softc;
 	struct sume_adapter *adapter = nf_priv->adapter;
 	uint8_t *outbuf;
-	int error, i, last, offset;
+	int i, last, offset;
 	device_t dev;
 	struct nf_metadata *mdata;
 	int padlen = SUME_MIN_PKT_SIZE;
@@ -1165,17 +1152,8 @@ sume_if_start_locked(struct ifnet *ifp)
 	    adapter->send[i]->len);		/* words */
 
 	/* Fill the bouncebuf "descriptor". */
-	error = sume_fill_bb_desc(adapter,
-	    adapter->send[i], SUME_RIFFA_LEN(adapter->send[i]->len));
-	if (error) {
-		device_printf(dev, "%s: failed to fill the bouncebuffer "
-		    "descriptor\n", __func__);
-		/*
-		*  Failed xmit means we need to try again later so requeue.
-		*/
-		IFQ_DRV_PREPEND(&ifp->if_snd, m);
-		return (ENOMEM);
-	}
+	sume_fill_bb_desc(adapter, adapter->send[i],
+	    SUME_RIFFA_LEN(adapter->send[i]->len));
 
 	/* Update the state before intiating the DMA to avoid races. */
 	adapter->send[i]->state = SUME_RIFFA_CHAN_STATE_READY;
