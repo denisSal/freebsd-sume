@@ -104,6 +104,8 @@
 
 #define	SUME_MIN_PKT_SIZE		(ETHER_MIN_LEN - ETHER_CRC_LEN)
 
+#define	DESC 8
+
 struct irq {
 	struct resource		*res;
 	uint32_t		rid;
@@ -151,6 +153,23 @@ struct nf_priv {
 	struct nf_stats		stats;
 };
 
+struct hw_rx_desc {
+	bus_dmamap_t		my_map;
+	uint32_t		lower;
+	uint32_t		upper;
+	uint32_t		nseg;
+};
+
+struct rx_desc {
+	struct hw_rx_desc	dma;
+	uint32_t		len;
+	struct mbuf		*m;
+	struct nf_metadata	*meta;
+	struct ifnet		*ifp;
+	struct rx_desc		*next;
+	int rb;
+};
+
 struct sume_adapter {
 	device_t		dev;
 	uint32_t		rid;
@@ -173,6 +192,14 @@ struct sume_adapter {
 
 	uint64_t		packets_err;
 	uint64_t		bytes_err;
+	bus_dma_tag_t		btag;
+	bus_dma_tag_t		bbtag;
+
+	struct rx_desc		*rx;
+	struct rx_desc		*cur;
+	struct rx_desc		*head;
+	struct rx_desc		*tail;
+	uint32_t		filled;
 };
 
 /* SUME metadata:

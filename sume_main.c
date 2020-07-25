@@ -196,6 +196,7 @@ sume_probe(device_t dev)
 	return (ENXIO);
 }
 
+#if 0
 /*
  * Building mbuf for packet received from SUME. We expect to receive 'len'
  * bytes of data (including metadata) written from the bouncebuffer address
@@ -278,6 +279,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 	nf_priv->stats.rx_bytes += plen;
 	return (m);
 }
+#endif
 
 /*
  * SUME interrupt handler for when we get a valid interrupt from the board.
@@ -320,10 +322,12 @@ sume_intr_handler(void *arg)
 {
 	struct sume_adapter *adapter = arg;
 	uint32_t vect, vect0, vect1, len;
-	int i, error, loops;
+	int i, loops;
 	device_t dev = adapter->dev;
-	struct mbuf *m = NULL;
-	struct ifnet *ifp = NULL;
+	struct rx_desc *rxd = NULL;
+	struct rx_desc *head = adapter->head;
+	int ctr = 0, ctr2 = 0;
+	int empty_queue = 0;
 
 	SUME_LOCK(adapter);
 
@@ -437,8 +441,6 @@ sume_intr_handler(void *arg)
 			switch (adapter->recv[i]->state) {
 			case SUME_RIFFA_CHAN_STATE_IDLE:
 				if (vect & SUME_MSI_RXQUE) {
-					uint32_t max_ptr;
-
 					/* Clear recovery state. */
 					adapter->recv[i]->flags &=
 					    ~SUME_CHAN_STATE_RECOVERY_FLAG;
@@ -451,42 +453,22 @@ sume_intr_handler(void *arg)
 					    read_reg(adapter, RIFFA_CHNL_REG(i,
 					    RIFFA_TX_LEN_REG_OFF));
 
-					/* Boundary checks. */
-					max_ptr = (uint32_t) ((char *)
-					    adapter->recv[i]->buf_addr
-					    + SUME_RIFFA_OFFSET(
-					    adapter->recv[i]->offlast) +
-					    SUME_RIFFA_LEN(
-					    adapter->recv[i]->len) - 1);
-					if (max_ptr < (uint32_t)
-					    adapter->recv[i]->buf_addr) {
-						device_printf(dev, "%s: "
-						    "receive buffer "
-						    "wrap-around overflow.\n",
-						    __func__);
-					}
-					if ((SUME_RIFFA_OFFSET(
-					    adapter->recv[i]->offlast) +
-					    SUME_RIFFA_LEN(
-					    adapter->recv[i]->len)) >
-					    adapter->sg_buf_size) {
-						device_printf(dev, "%s: "
-						    "receive buffer too "
-						    "small.\n", __func__);
-					}
+					struct nf_bb_desc *bouncebuf = (struct
+					    nf_bb_desc *) adapter->recv[i]->buf_addr;
 
-					/* Fill the bouncebuf "descriptor". */
-					error = sume_fill_bb_desc(adapter,
-					    adapter->recv[i], SUME_RIFFA_LEN(
-					    adapter->recv[i]->len));
-					if (error != 0) {
-						device_printf(dev, "%s: "
-						    "Failed to build the "
-						    "bouncebuffer descriptor."
-						    "\n", __func__);
-					}
+					bouncebuf->lower = head->dma.lower;
+					bouncebuf->upper = head->dma.upper;
+					bouncebuf->len = adapter->recv[i]->len;
+
+					adapter->recv[i]->num_sg = head->dma.nseg;
+
 					bus_dmamap_sync(
-					    adapter->recv[i]->my_tag,
+					    adapter->btag,
+					    head->dma.my_map,
+					    BUS_DMASYNC_PREREAD |
+					    BUS_DMASYNC_PREWRITE);
+					bus_dmamap_sync(
+					    adapter->bbtag,
 					    adapter->recv[i]->my_map,
 					    BUS_DMASYNC_PREREAD |
 					    BUS_DMASYNC_PREWRITE);
@@ -505,10 +487,17 @@ sume_intr_handler(void *arg)
 					    RIFFA_TX_SG_LEN_REG_OFF),
 					    4 * adapter->recv[i]->num_sg);
 					bus_dmamap_sync(
-					    adapter->recv[i]->my_tag,
+					    adapter->btag,
+					    head->dma.my_map,
+					    BUS_DMASYNC_POSTREAD |
+					    BUS_DMASYNC_POSTWRITE);
+					bus_dmamap_sync(
+					    adapter->bbtag,
 					    adapter->recv[i]->my_map,
 					    BUS_DMASYNC_POSTREAD |
 					    BUS_DMASYNC_POSTWRITE);
+
+					adapter->head = adapter->head->next;
 
 					adapter->recv[i]->state =
 					    SUME_RIFFA_CHAN_STATE_READY;
@@ -549,10 +538,19 @@ sume_intr_handler(void *arg)
 					 * are words.
 					 */
 					if (i == SUME_RIFFA_CHANNEL_DATA) {
-						m = sume_rx_build_mbuf(
-						    adapter, i, len << 2);
+
+						adapter->cur->len = len << 2;
+						adapter->cur = adapter->cur->next;
+						adapter->filled++;
+
+						if (!(vect & SUME_MSI_RXQUE) ||
+						    adapter->filled > 2) {
+							empty_queue = 1;
+							ctr2 = ctr = adapter->filled;
+						}
 						adapter->recv[i]->state =
 						    SUME_RIFFA_CHAN_STATE_IDLE;
+
 					} else if (i == SUME_RIFFA_CHANNEL_REG)
 						wakeup(&adapter->recv[i]->event);
 					else {
@@ -594,12 +592,121 @@ sume_intr_handler(void *arg)
 			    "%d\n", __func__, vect, adapter->recv[i]->state,
 			    loops);
 	}
-	SUME_UNLOCK(adapter);
 
-	if (m != NULL) {
-		ifp = m->m_pkthdr.rcvif;
-		(*ifp->if_input)(ifp, m);
+	//SUME_UNLOCK(adapter);
+
+	if (!empty_queue) {
+		SUME_UNLOCK(adapter);
+		return;
 	}
+
+	rxd = adapter->tail->next;
+
+	struct nf_priv *nf_priv;
+	struct ifnet *ifp;
+	int np;
+	uint16_t plen;
+	struct nf_metadata *mdata;
+	bus_dma_segment_t segs[1];
+	int error;
+
+	while (1) {
+		mdata = rxd->meta;
+
+		/* The metadata header is 16 bytes. */
+		if (rxd->len < sizeof(struct nf_metadata)) {
+			adapter->packets_err++;
+			adapter->bytes_err += rxd->len;
+			device_printf(dev, "%s: short frame (%d)\n",
+			    __func__, rxd->len);
+			goto newround;
+		}
+
+		if (le16toh(mdata->magic)!= SUME_RIFFA_MAGIC) {
+			device_printf(dev, "%s: corrupted packet (0x%04x != "
+			    "0x%04x magic)\n", __func__, le16toh(mdata->magic),
+			    SUME_RIFFA_MAGIC);
+			goto newround;
+		}
+
+		plen = le16toh(mdata->plen);
+		if ((sizeof(struct nf_metadata) + plen) > rxd->len) {
+			device_printf(dev, "%s: corrupted packet (%zd + %d > "
+			    "%d)\n", __func__, sizeof(struct nf_metadata),
+			    plen, rxd->len);
+			goto newround;
+		}
+
+		/* We got the packet from one of the even bits */
+		np = (ffs(le16toh(mdata->dport) & SUME_DPORT_MASK) >> 1) - 1;
+		if (np > sume_nports) {
+			adapter->packets_err++;
+			adapter->bytes_err += plen;
+			device_printf(dev, "%s: invalid destination port 0x%04x"
+			    "(%d)\n", __func__, le16toh(mdata->dport), np);
+			goto newround;
+		}
+		ifp = rxd->ifp = adapter->ifp[np];
+
+		/* If the interface is down, well, we are done. */
+		nf_priv = ifp->if_softc;
+		if (nf_priv->port_up == 0) {
+			adapter->packets_err++;
+			adapter->bytes_err += plen;
+			if (sume_debug)
+				device_printf(dev, "Device nf%d not up.\n", np);
+			goto newround;
+		}
+
+		nf_priv->stats.rx_packets++;
+		nf_priv->stats.rx_bytes += plen;
+
+		m_adj(rxd->m, sizeof(struct nf_metadata));
+		rxd->m->m_len = rxd->m->m_pkthdr.len = le16toh(mdata->plen);
+		rxd->m->m_pkthdr.rcvif = ifp;
+
+		(*ifp->if_input)(ifp, rxd->m);
+
+newround:
+		//bus_dmamap_unload(adapter->btag, rxd->dma.my_map);
+		rxd->m = m_getcl(M_NOWAIT, MT_DATA, M_PKTHDR);
+		if (rxd->m == NULL) {
+			if (sume_debug)
+				printf("m_getcl returned NULL\n");
+			break;
+		}
+
+		rxd->m->m_len = rxd->m->m_pkthdr.len = MCLBYTES;
+
+		rxd->meta = mtod(rxd->m, struct nf_metadata *);
+		error = bus_dmamap_load_mbuf_sg(adapter->btag,
+		    rxd->dma.my_map, rxd->m, segs, &rxd->dma.nseg, BUS_DMA_NOWAIT);
+		if (error) {
+			m_freem(rxd->m);
+			device_printf(dev, "can't map mbuf error %d\n", error);
+			break;
+		}
+
+		if (rxd->dma.nseg != 1) {
+			m_freem(rxd->m);
+			if (sume_debug)
+				printf("nseg != 1\n");
+			break;
+		}
+
+		rxd->dma.lower = segs->ds_addr;
+		rxd->dma.upper = segs->ds_addr >> 32;
+
+		if (--ctr == 0) {
+			adapter->tail = rxd;
+			break;
+		}
+		rxd = rxd->next;
+	}
+
+	//SUME_LOCK(adapter);
+	adapter->filled -= ctr2 - ctr;
+	SUME_UNLOCK(adapter);
 }
 
 /*
@@ -820,7 +927,7 @@ sume_reg_wr_locked(struct sume_adapter *adapter, int i)
 	/* Update the state before intiating the DMA to avoid races. */
 	adapter->send[i]->state = SUME_RIFFA_CHAN_STATE_READY;
 
-	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
+	bus_dmamap_sync(adapter->bbtag, adapter->send[i]->my_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	/* DMA. */
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_LO_REG_OFF),
@@ -829,7 +936,7 @@ sume_reg_wr_locked(struct sume_adapter *adapter, int i)
 	    SUME_RIFFA_HI_ADDR(adapter->send[i]->buf_hw_addr));
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_LEN_REG_OFF),
 	    4 * adapter->send[i]->num_sg);
-	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
+	bus_dmamap_sync(adapter->bbtag, adapter->send[i]->my_map,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
 	return (0);
@@ -931,7 +1038,7 @@ sume_read_reg_result(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 
 	SUME_LOCK(adapter);
 
-	bus_dmamap_sync(adapter->recv[i]->my_tag, adapter->recv[i]->my_map,
+	bus_dmamap_sync(adapter->bbtag, adapter->recv[i]->my_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	/*
 	 * We only need to be woken up at the end of the transaction.
@@ -949,7 +1056,7 @@ sume_read_reg_result(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 		return (EWOULDBLOCK);
 	}
 
-	bus_dmamap_sync(adapter->recv[i]->my_tag, adapter->recv[i]->my_map,
+	bus_dmamap_sync(adapter->bbtag, adapter->recv[i]->my_map,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
 	/*
@@ -1152,7 +1259,7 @@ sume_if_start_locked(struct ifnet *ifp)
 		return (ENOMEM);
 	}
 
-	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
+	bus_dmamap_sync(adapter->bbtag, adapter->send[i]->my_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 	/* Zero out the padded data */
@@ -1197,7 +1304,7 @@ sume_if_start_locked(struct ifnet *ifp)
 	/* Update the state before intiating the DMA to avoid races. */
 	adapter->send[i]->state = SUME_RIFFA_CHAN_STATE_READY;
 
-	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
+	bus_dmamap_sync(adapter->bbtag, adapter->send[i]->my_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	/* DMA. */
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_LO_REG_OFF),
@@ -1207,7 +1314,7 @@ sume_if_start_locked(struct ifnet *ifp)
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_LEN_REG_OFF),
 	    4 * adapter->send[i]->num_sg);
 
-	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
+	bus_dmamap_sync(adapter->bbtag, adapter->send[i]->my_map,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
 	/* We can free as long as we use the bounce buffer. */
@@ -1321,7 +1428,7 @@ callback_dma(void *arg, bus_dma_segment_t *segs, int nseg, int err)
 }
 
 static int
-sume_probe_riffa_buffer(const struct sume_adapter *adapter,
+sume_probe_riffa_buffer(struct sume_adapter *adapter,
     struct riffa_chnl_dir ***p, const char *dir)
 {
 	struct riffa_chnl_dir **rp;
@@ -1350,43 +1457,24 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 			return (error);
 		}
 
-		int err = bus_dma_tag_create(bus_get_dma_tag(dev),
-		    4, 0,
-		    BUS_SPACE_MAXADDR,
-		    BUS_SPACE_MAXADDR,
-		    NULL, NULL,
-		    adapter->sg_buf_size, // CHECK
-		    1,
-		    adapter->sg_buf_size, // CHECK
-		    0,
-		    NULL,
-		    NULL,
-		    &rp[i]->my_tag);
-
-		if (err) {
-			device_printf(dev, "%s: bus_dma_tag_create(%s[%d]) "
-			    "failed.\n", __func__, dir, i);
-			return (err);
-		}
-
-		err = bus_dmamem_alloc(rp[i]->my_tag, (void **)
+		error = bus_dmamem_alloc(adapter->bbtag, (void **)
 		    &rp[i]->buf_addr, BUS_DMA_WAITOK | BUS_DMA_COHERENT |
 		    BUS_DMA_ZERO, &rp[i]->my_map);
-		if (err) {
+		if (error) {
 			device_printf(dev, "%s: bus_dmamem_alloc(%s[%d]) "
 			    "rp[i]->buf_addr failed.\n", __func__, dir, i);
-			return (err);
+			return (error);
 		}
 
-		bzero(rp[i]->buf_addr, adapter->sg_buf_size);
+		bzero(rp[i]->buf_addr, sizeof(struct nf_bb_desc));
 
-		err = bus_dmamap_load(rp[i]->my_tag, rp[i]->my_map,
-		    rp[i]->buf_addr, adapter->sg_buf_size, callback_dma,
+		error = bus_dmamap_load(adapter->bbtag, rp[i]->my_map,
+		    rp[i]->buf_addr, sizeof(struct nf_bb_desc), callback_dma,
 		    &hw_addr, BUS_DMA_NOWAIT);
-		if (err) {
+		if (error) {
 			device_printf(dev, "%s: bus_dmamap_load(%s[%d]) "
 			    "hw_addr failed.\n", __func__, dir, i);
-			return (err);
+			return (error);
 		}
 		rp[i]->buf_hw_addr = hw_addr;
 
@@ -1400,7 +1488,96 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 static int
 sume_probe_riffa_buffers(struct sume_adapter *adapter)
 {
-	int error;
+	int error, i;
+	device_t dev = adapter->dev;
+
+	adapter->filled = 0;
+
+	adapter->rx = malloc(DESC * sizeof(struct rx_desc), M_SUME,
+		    M_ZERO | M_WAITOK);
+
+	error = bus_dma_tag_create(bus_get_dma_tag(dev),
+	    4, 0,
+	    BUS_SPACE_MAXADDR,
+	    BUS_SPACE_MAXADDR,
+	    NULL, NULL,
+	    MCLBYTES * DESC, // CHECK
+	    DESC,
+	    MCLBYTES, // CHECK
+	    0,
+	    NULL,
+	    NULL,
+	    &adapter->btag);
+
+	if (error) {
+		device_printf(dev, "%s: bus_dma_tag_create failed.\n",
+		    __func__);
+		return (error);
+	}
+
+	for (i = 0; i < DESC; i++) {
+		struct rx_desc *rxd = &adapter->rx[i];
+		bus_dma_segment_t segs[1];
+
+		error = bus_dmamap_create(adapter->btag, BUS_DMA_COHERENT,
+		    &rxd->dma.my_map);
+		if (error)
+			return (error);
+
+		rxd->rb = i;
+		if (i != DESC-1)
+			rxd->next = &adapter->rx[i+1];
+
+		rxd->m = m_getcl(M_NOWAIT, MT_DATA, M_PKTHDR);
+		if (rxd->m == NULL) {
+			return (ENOMEM);
+		}
+
+		rxd->m->m_len = rxd->m->m_pkthdr.len = MCLBYTES;
+
+		rxd->meta = mtod(rxd->m, struct nf_metadata *);
+		error = bus_dmamap_load_mbuf_sg(adapter->btag,
+		    rxd->dma.my_map, rxd->m, segs, &rxd->dma.nseg, BUS_DMA_NOWAIT);
+		if (error) {
+			m_freem(rxd->m);
+			device_printf(dev, "can't map mbuf error %d\n", error);
+			return (error);
+		}
+
+		if (rxd->dma.nseg != 1) {
+			return (ENOMEM);
+		}
+
+		rxd->dma.lower = segs->ds_addr;
+		rxd->dma.upper = segs->ds_addr >> 32;
+	}
+
+	adapter->rx[DESC-1].next = &adapter->rx[0];
+
+	adapter->cur = adapter->head = &adapter->rx[0];
+	adapter->tail = &adapter->rx[DESC-1];
+
+	printf("head = %d\n", adapter->head->rb);
+	printf("tail = %d\n", adapter->tail->rb);
+	printf("cur = %d\n", adapter->cur->rb);
+
+	error = bus_dma_tag_create(bus_get_dma_tag(dev),
+	    4, 0,
+	    BUS_SPACE_MAXADDR,
+	    BUS_SPACE_MAXADDR,
+	    NULL, NULL,
+	    2 * adapter->num_chnls * sizeof(struct nf_bb_desc), // CHECK
+	    2 * adapter->num_chnls,
+	    sizeof(struct nf_bb_desc), // CHECK
+	    0,
+	    NULL,
+	    NULL,
+	    &adapter->bbtag);
+
+	if (error) {
+		device_printf(dev, "%s: bus_dma_tag_create(bbtag)", __func__);
+		return (error);
+	}
 
 	error = sume_probe_riffa_buffer(adapter, &adapter->recv, "recv");
 	if (error)
@@ -1545,8 +1722,10 @@ sume_remove_riffa_buffer(const struct sume_adapter *adapter,
 			continue;
 
 		if (pp[i]->buf_hw_addr != 0) {
-			bus_dmamem_free(pp[i]->my_tag, pp[i]->buf_addr,
+			bus_dmamap_unload(adapter->bbtag, pp[i]->my_map);
+			bus_dmamem_free(adapter->bbtag, pp[i]->buf_addr,
 			    pp[i]->my_map);
+			bus_dmamap_destroy(adapter->bbtag, pp[i]->my_map);
 			pp[i]->buf_hw_addr = 0;
 		}
 
@@ -1557,6 +1736,8 @@ sume_remove_riffa_buffer(const struct sume_adapter *adapter,
 static void
 sume_remove_riffa_buffers(struct sume_adapter *adapter)
 {
+	int i;
+
 	if (adapter->send != NULL) {
 		sume_remove_riffa_buffer(adapter, adapter->send);
 		free(adapter->send, M_SUME);
@@ -1566,6 +1747,29 @@ sume_remove_riffa_buffers(struct sume_adapter *adapter)
 		sume_remove_riffa_buffer(adapter, adapter->recv);
 		free(adapter->recv, M_SUME);
 		adapter->recv = NULL;
+	}
+
+	bus_dma_tag_destroy(adapter->bbtag);
+
+	for (i = 0; i < DESC; i++) {
+		struct rx_desc *rxd = &adapter->rx[i];
+
+		if (rxd != NULL)
+			continue;
+
+		bus_dmamap_unload(adapter->btag, rxd->dma.my_map);
+
+		if (rxd->m != NULL)
+			m_freem(rxd->m);
+
+		bus_dmamap_destroy(adapter->btag, rxd->dma.my_map);
+	}
+
+	bus_dma_tag_destroy(adapter->btag);
+
+	if (adapter->rx != NULL) {
+		free(adapter->rx, M_SUME);
+		adapter->rx = NULL;
 	}
 }
 
