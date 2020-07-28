@@ -1083,7 +1083,7 @@ sume_if_start_locked(struct ifnet *ifp)
 	KASSERT(nf_priv->riffa_channel == SUME_RIFFA_CHANNEL_DATA,
 	    ("TX on non-data channel"));
 
-	IFQ_DRV_DEQUEUE(&ifp->if_snd, m);
+	IFQ_DEQUEUE(&ifp->if_snd, m);
 	if (m == NULL)
 		return (EINVAL);
 
@@ -1248,10 +1248,6 @@ sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 	nf_priv->ifp = ifp;
 	nf_priv->port = port;
 	nf_priv->riffa_channel = SUME_RIFFA_CHANNEL_DATA;
-
-	IFQ_SET_MAXLEN(&ifp->if_snd, ifqmaxlen);
-	ifp->if_snd.ifq_drv_maxlen = ifqmaxlen;
-	IFQ_SET_READY(&ifp->if_snd);
 
 	uint8_t hw_addr[ETHER_ADDR_LEN] = DEFAULT_ETHER_ADDRESS;
 	hw_addr[ETHER_ADDR_LEN-1] = port;
