@@ -163,7 +163,7 @@ struct sume_adapter {
 	uint32_t		num_chnls;
 	uint32_t		num_sg;
 	uint32_t		sg_buf_size;
-	volatile int		running;
+	uint32_t		running;
 	struct ifnet		*ifp[4];
 	struct mtx		lock;
 

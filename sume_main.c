@@ -626,7 +626,7 @@ sume_intr_filter(void *arg)
 	 * Ignore early interrupts from RIFFA given we cannot disable interrupt
 	 * generation.
 	 */
-	if (atomic_load_int(&adapter->running) == 0)
+	if (adapter->running == 0)
 		return (FILTER_STRAY);
 
 	return (FILTER_SCHEDULE_THREAD);
@@ -966,7 +966,7 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 		return (EINVAL);
 
 	adapter = nf_priv->adapter;
-	if (atomic_load_int(&adapter->running) == 0)
+	if (adapter->running == 0)
 		return (ENODEV);
 
 	switch (cmd) {
@@ -1478,7 +1478,7 @@ sume_attach(device_t dev)
 
 	mtx_init(&adapter->lock, "Global lock", NULL, MTX_DEF);
 
-	atomic_set_int(&adapter->running, 0);
+	adapter->running = 0;
 
 	/* OK finish up RIFFA. */
 	error = sume_probe_riffa_pci(adapter);
@@ -1503,7 +1503,7 @@ sume_attach(device_t dev)
 	read_reg(adapter, RIFFA_INFO_REG_OFF);
 
 	/* Ready to go, "enable" IRQ. */
-	atomic_set_int(&adapter->running, 1);
+	adapter->running = 1;
 
 	return (0);
 
@@ -1557,7 +1557,7 @@ sume_detach(device_t dev)
 
 	KASSERT(mtx_initialized(&adapter->lock), ("SUME mutex not "
 	    "initialized"));
-	atomic_set_int(&adapter->running, 0);
+	adapter->running = 0;
 
 	for (i = 0; i < sume_nports; i++) {
 		struct ifnet *ifp = adapter->ifp[i];
