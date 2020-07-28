@@ -220,16 +220,17 @@ sume_probe(device_t dev)
  * correct interface to rcvif and send the packet to the OS with if_input.
  */
 static struct mbuf *
-sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
+sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
 {
 	struct nf_priv *nf_priv;
 	struct mbuf *m;
 	struct ifnet *ifp = NULL;
 	int np;
 	uint16_t sport, dport, plen, magic;
-	uint8_t *indata = (uint8_t *) adapter->recv[i]->buf_addr +
-	    sizeof(struct nf_bb_desc);
 	device_t dev = adapter->dev;
+	uint8_t *indata = (uint8_t *)
+	    adapter->recv[SUME_RIFFA_CHANNEL_DATA]->buf_addr +
+	    sizeof(struct nf_bb_desc);
 	struct nf_metadata *mdata = (struct nf_metadata *) indata;
 
 	/* The metadata header is 16 bytes. */
@@ -339,6 +340,7 @@ sume_intr_handler(void *arg)
 	device_t dev = adapter->dev;
 	struct mbuf *m = NULL;
 	struct ifnet *ifp = NULL;
+	struct riffa_chnl_dir *send, *recv;
 
 	SUME_LOCK(adapter);
 
@@ -354,6 +356,8 @@ sume_intr_handler(void *arg)
 	 */
 	for (i = 0; i < SUME_RIFFA_CHANNELS; i++) {
 		vect = vect0 >> (5 * i);
+		send = adapter->send[i];
+		recv = adapter->recv[i];
 
 		loops = 0;
 		while ((vect & (SUME_MSI_TXBUF | SUME_MSI_TXDONE)) &&
@@ -361,75 +365,67 @@ sume_intr_handler(void *arg)
 			if (sume_debug)
 				device_printf(dev, "%s: TX ch %d state %u "
 				    "vect = 0x%08x\n", __func__, i,
-				    adapter->send[i]->state, vect);
-			switch (adapter->send[i]->state) {
+				    send->state, vect);
+			switch (send->state) {
 			case SUME_RIFFA_CHAN_STATE_IDLE:
 				break;
 			case SUME_RIFFA_CHAN_STATE_READY:
-				if (vect & SUME_MSI_TXBUF) {
-					adapter->send[i]->state =
-					    SUME_RIFFA_CHAN_STATE_READ;
-					vect &= ~SUME_MSI_TXBUF;
-				} else {
+				if (!(vect & SUME_MSI_TXBUF)) {
 					device_printf(dev, "%s: ch %d "
 					    "unexpected interrupt in send+3 "
 					    "state %u: vect = 0x%08x\n",
-					    __func__, i,
-					    adapter->send[i]->state, vect);
-					adapter->send[i]->flags |=
+					    __func__, i, send->state, vect);
+					send->flags |=
 					    SUME_CHAN_STATE_RECOVERY_FLAG;
+					break;
 				}
+				send->state = SUME_RIFFA_CHAN_STATE_READ;
+				vect &= ~SUME_MSI_TXBUF;
 				break;
 			case SUME_RIFFA_CHAN_STATE_READ:
-				if (vect & SUME_MSI_TXDONE) {
-					adapter->send[i]->state =
-					    SUME_RIFFA_CHAN_STATE_LEN;
-
-					len = read_reg(adapter,
-					    RIFFA_CHNL_REG(i,
-					    RIFFA_RX_TNFR_LEN_REG_OFF));
-					if (i == SUME_RIFFA_CHANNEL_DATA) {
-						adapter->send[i]->state =
-						    SUME_RIFFA_CHAN_STATE_IDLE;
-						check_queues(adapter);
-					} else if (i == SUME_RIFFA_CHANNEL_REG)
-						wakeup(&adapter->send[i]->event);
-					else {
-						device_printf(dev, "%s: "
-						    "interrupt on ch %d "
-						    "unexpected in send+4 "
-						    "state %u: vect = "
-						    "0x%08x\n", __func__, i,
-						    adapter->send[i]->state,
-						    vect);
-						adapter->send[i]->flags |=
-						    SUME_CHAN_STATE_RECOVERY_FLAG;
-					}
-					vect &= ~SUME_MSI_TXDONE;
-				} else {
+				if (!(vect & SUME_MSI_TXDONE)) {
 					device_printf(dev, "%s: ch %d "
 					    "unexpected interrupt in send+4 "
 					    "state %u: vect = 0x%08x\n",
-					    __func__, i,
-					    adapter->send[i]->state, vect);
-					adapter->send[i]->flags |=
+					    __func__, i, send->state, vect);
+					send->flags |=
+					    SUME_CHAN_STATE_RECOVERY_FLAG;
+					send->state =
+					    SUME_RIFFA_CHAN_STATE_LEN;
+					break;
+				}
+
+				len = read_reg(adapter, RIFFA_CHNL_REG(i,
+				    RIFFA_RX_TNFR_LEN_REG_OFF));
+				if (i == SUME_RIFFA_CHANNEL_DATA) {
+					send->state =
+					    SUME_RIFFA_CHAN_STATE_IDLE;
+					check_queues(adapter);
+				} else if (i == SUME_RIFFA_CHANNEL_REG)
+					wakeup(&send->event);
+				else {
+					device_printf(dev, "%s: interrupt on "
+					    "ch %d unexpected in send+4 state "
+					    "%u: vect = 0x%08x\n", __func__, i,
+					    send->state, vect);
+					send->flags |=
 					    SUME_CHAN_STATE_RECOVERY_FLAG;
 				}
+				vect &= ~SUME_MSI_TXDONE;
 				break;
 			case SUME_RIFFA_CHAN_STATE_LEN:
 				break;
 			default:
-				printf("WARNON!\n");
+				device_printf(dev, "Unknown TX state!\n");
 			}
 			loops++;
 		}
 
 		if ((vect & (SUME_MSI_TXBUF | SUME_MSI_TXDONE)) &&
-		    ((adapter->send[i]->flags & SUME_CHAN_STATE_RECOVERY_FLAG)
-		    != 0))
+		    ((send->flags & SUME_CHAN_STATE_RECOVERY_FLAG) != 0))
 			device_printf(dev, "%s: ignoring vect = 0x%08x during "
 			    "TX; not in recovery; state = %d loops = %d\n",
-			    __func__, vect, adapter->send[i]->state, loops);
+			    __func__, vect, send->state, loops);
 
 		loops = 0;
 		while ((vect & (SUME_MSI_RXQUE | SUME_MSI_RXBUF |
@@ -437,161 +433,130 @@ sume_intr_handler(void *arg)
 			if (sume_debug)
 				device_printf(dev, "%s: RX ch %d state %u "
 				    "vect = 0x%08x\n", __func__, i,
-				    adapter->recv[i]->state, vect);
-			switch (adapter->recv[i]->state) {
+				    recv->state, vect);
+			switch (recv->state) {
 			case SUME_RIFFA_CHAN_STATE_IDLE:
-				if (vect & SUME_MSI_RXQUE) {
-					uint32_t max_ptr;
-
-					/* Clear recovery state. */
-					adapter->recv[i]->flags &=
-					    ~SUME_CHAN_STATE_RECOVERY_FLAG;
-
-					/* Get offset and length. */
-					adapter->recv[i]->offlast = read_reg(
-					    adapter, RIFFA_CHNL_REG(i,
-					    RIFFA_TX_OFFLAST_REG_OFF));
-					adapter->recv[i]->len =
-					    read_reg(adapter, RIFFA_CHNL_REG(i,
-					    RIFFA_TX_LEN_REG_OFF));
-
-					/* Boundary checks. */
-					max_ptr = (uint32_t) ((char *)
-					    adapter->recv[i]->buf_addr
-					    + SUME_RIFFA_OFFSET(
-					    adapter->recv[i]->offlast) +
-					    SUME_RIFFA_LEN(
-					    adapter->recv[i]->len) - 1);
-					if (max_ptr < (uint32_t)
-					    adapter->recv[i]->buf_addr) {
-						device_printf(dev, "%s: "
-						    "receive buffer "
-						    "wrap-around overflow.\n",
-						    __func__);
-					}
-					if ((SUME_RIFFA_OFFSET(
-					    adapter->recv[i]->offlast) +
-					    SUME_RIFFA_LEN(
-					    adapter->recv[i]->len)) >
-					    adapter->sg_buf_size) {
-						device_printf(dev, "%s: "
-						    "receive buffer too "
-						    "small.\n", __func__);
-					}
-
-					/* Fill the bouncebuf "descriptor". */
-					sume_fill_bb_desc(adapter,
-					    adapter->recv[i], SUME_RIFFA_LEN(
-					    adapter->recv[i]->len));
-
-					bus_dmamap_sync(
-					    adapter->recv[i]->my_tag,
-					    adapter->recv[i]->my_map,
-					    BUS_DMASYNC_PREREAD |
-					    BUS_DMASYNC_PREWRITE);
-					write_reg(adapter,
-					    RIFFA_CHNL_REG(i,
-					    RIFFA_TX_SG_ADDR_LO_REG_OFF),
-					    SUME_RIFFA_LO_ADDR(
-					    adapter->recv[i]->buf_hw_addr));
-					write_reg(adapter,
-					    RIFFA_CHNL_REG(i,
-					    RIFFA_TX_SG_ADDR_HI_REG_OFF),
-					    SUME_RIFFA_HI_ADDR(
-					    adapter->recv[i]->buf_hw_addr));
-					write_reg(adapter,
-					    RIFFA_CHNL_REG(i,
-					    RIFFA_TX_SG_LEN_REG_OFF),
-					    4 * adapter->recv[i]->num_sg);
-					bus_dmamap_sync(
-					    adapter->recv[i]->my_tag,
-					    adapter->recv[i]->my_map,
-					    BUS_DMASYNC_POSTREAD |
-					    BUS_DMASYNC_POSTWRITE);
-
-					adapter->recv[i]->state =
-					    SUME_RIFFA_CHAN_STATE_READY;
-					vect &= ~SUME_MSI_RXQUE;
-				} else {
+				if (!(vect & SUME_MSI_RXQUE)) {
 					device_printf(dev, "%s: ch %d "
 					    "unexpected interrupt in recv+0 "
 					    "state %u: vect = 0x%08x\n",
-					    __func__, i,
-					    adapter->recv[i]->state, vect);
-					adapter->recv[i]->flags |=
+					    __func__, i, recv->state, vect);
+					recv->flags |=
 					    SUME_CHAN_STATE_RECOVERY_FLAG;
+					break;
 				}
+				uint32_t max_ptr;
+
+				/* Clear recovery state. */
+				recv->flags &= ~SUME_CHAN_STATE_RECOVERY_FLAG;
+
+				/* Get offset and length. */
+				recv->offlast = read_reg(adapter,
+				    RIFFA_CHNL_REG(i,
+				    RIFFA_TX_OFFLAST_REG_OFF));
+				recv->len = read_reg(adapter, RIFFA_CHNL_REG(i,
+				    RIFFA_TX_LEN_REG_OFF));
+
+				/* Boundary checks. */
+				max_ptr = (uint32_t) ((char *) recv->buf_addr +
+				    SUME_RIFFA_OFFSET(recv->offlast) +
+				    SUME_RIFFA_LEN(recv->len) - 1);
+				if (max_ptr < (uint32_t) recv->buf_addr) {
+					device_printf(dev, "%s: receive buffer"
+					    " wrap-around overflow.\n",
+					    __func__);
+				}
+				if ((SUME_RIFFA_OFFSET(recv->offlast) +
+				    SUME_RIFFA_LEN(recv->len)) >
+				    adapter->sg_buf_size) {
+					device_printf(dev, "%s: receive buffer"
+					    " too small.\n", __func__);
+				}
+
+				/* Fill the bouncebuf "descriptor". */
+				sume_fill_bb_desc(adapter, recv,
+				    SUME_RIFFA_LEN(recv->len));
+
+				bus_dmamap_sync(recv->my_tag, recv->my_map,
+				    BUS_DMASYNC_PREREAD |
+				    BUS_DMASYNC_PREWRITE);
+				write_reg(adapter, RIFFA_CHNL_REG(i,
+				    RIFFA_TX_SG_ADDR_LO_REG_OFF),
+				    SUME_RIFFA_LO_ADDR(recv->buf_hw_addr));
+				write_reg(adapter, RIFFA_CHNL_REG(i,
+				    RIFFA_TX_SG_ADDR_HI_REG_OFF),
+				    SUME_RIFFA_HI_ADDR(recv->buf_hw_addr));
+				write_reg(adapter, RIFFA_CHNL_REG(i,
+				    RIFFA_TX_SG_LEN_REG_OFF),
+				    4 *recv->num_sg);
+				bus_dmamap_sync(recv->my_tag, recv->my_map,
+				    BUS_DMASYNC_POSTREAD |
+				    BUS_DMASYNC_POSTWRITE);
+
+				recv->state = SUME_RIFFA_CHAN_STATE_READY;
+				vect &= ~SUME_MSI_RXQUE;
 				break;
 			case SUME_RIFFA_CHAN_STATE_READY:
-				if (vect & SUME_MSI_RXBUF) {
-					adapter->recv[i]->state =
-					    SUME_RIFFA_CHAN_STATE_READ;
-					vect &= ~SUME_MSI_RXBUF;
-				} else {
+				if (!(vect & SUME_MSI_RXBUF)) {
 					device_printf(dev, "%s: ch %d "
 					    "unexpected interrupt in recv+1 "
 					    "state %u: vect = 0x%08x\n",
-					    __func__, i,
-					    adapter->recv[i]->state, vect);
-					adapter->recv[i]->flags |=
+					    __func__, i, recv->state, vect);
+					recv->flags |=
 					    SUME_CHAN_STATE_RECOVERY_FLAG;
+					break;
 				}
+				recv->state = SUME_RIFFA_CHAN_STATE_READ;
+				vect &= ~SUME_MSI_RXBUF;
 				break;
 			case SUME_RIFFA_CHAN_STATE_READ:
-				if (vect & SUME_MSI_RXDONE) {
-					len = read_reg(adapter,
-					    RIFFA_CHNL_REG(i,
-					    RIFFA_TX_TNFR_LEN_REG_OFF));
-
-					/*
-					 * Remember, len and recv[i]->len
-					 * are words.
-					 */
-					if (i == SUME_RIFFA_CHANNEL_DATA) {
-						m = sume_rx_build_mbuf(
-						    adapter, i, len << 2);
-						adapter->recv[i]->state =
-						    SUME_RIFFA_CHAN_STATE_IDLE;
-					} else if (i == SUME_RIFFA_CHANNEL_REG)
-						wakeup(&adapter->recv[i]->event);
-					else {
-						device_printf(dev, "%s: "
-						    "interrupt on ch %d "
-						    "unexpected in recv+2 "
-						    "state %u: vect = "
-						    "0x%08x\n", __func__, i,
-						    adapter->recv[i]->state,
-						    vect);
-						adapter->recv[i]->flags |=
-						    SUME_CHAN_STATE_RECOVERY_FLAG;
-					}
-					vect &= ~SUME_MSI_RXDONE;
-
-				} else {
+				if (!(vect & SUME_MSI_RXDONE)) {
 					device_printf(dev, "%s: ch %d "
 					    "unexpected interrupt in recv+2 "
 					    "state %u: vect = 0x%08x\n",
-					    __func__, i,
-					    adapter->recv[i]->state, vect);
-					adapter->recv[i]->flags |=
+					    __func__, i, recv->state, vect);
+					recv->flags |=
+					    SUME_CHAN_STATE_RECOVERY_FLAG;
+					break;
+				}
+				len = read_reg(adapter, RIFFA_CHNL_REG(i,
+				    RIFFA_TX_TNFR_LEN_REG_OFF));
+
+				/*
+				 * Remember, len and recv[i]->len
+				 * are words.
+				 */
+				if (i == SUME_RIFFA_CHANNEL_DATA) {
+					m = sume_rx_build_mbuf(adapter, 
+					    len << 2);
+					recv->state =
+					    SUME_RIFFA_CHAN_STATE_IDLE;
+				} else if (i == SUME_RIFFA_CHANNEL_REG)
+					wakeup(&recv->event);
+				else {
+					device_printf(dev, "%s: interrupt on "
+					    "ch %d unexpected in recv+2 state "
+					    "%u: vect = 0x%08x\n", __func__, i,
+					    recv->state, vect);
+					recv->flags |=
 					    SUME_CHAN_STATE_RECOVERY_FLAG;
 				}
+				vect &= ~SUME_MSI_RXDONE;
 				break;
 			case SUME_RIFFA_CHAN_STATE_LEN:
 				break;
 			default:
-				printf("WARNON!\n");
+				device_printf(dev, "Unknown RX state!\n");
 			}
 			loops++;
 		}
 
 		if ((vect & (SUME_MSI_RXQUE | SUME_MSI_RXBUF |
-		    SUME_MSI_RXDONE)) && ((adapter->recv[i]->flags &
+		    SUME_MSI_RXDONE)) && ((recv->flags &
 		    SUME_CHAN_STATE_RECOVERY_FLAG) != 0))
-			device_printf(dev, "%s: ignoring vect = 0x%08x "
-			    "during RX; not in recovery; state = %d, loops = "
-			    "%d\n", __func__, vect, adapter->recv[i]->state,
-			    loops);
+			device_printf(dev, "%s: ignoring vect = 0x%08x during "
+			    "RX; not in recovery; state = %d, loops = %d\n",
+			    __func__, vect, recv->state, loops);
 	}
 	SUME_UNLOCK(adapter);
 
@@ -764,31 +729,34 @@ sume_fill_bb_desc(struct sume_adapter *adapter, struct riffa_chnl_dir *p,
 
 /* Register read/write. */
 static int
-sume_modreg_write_locked(struct sume_adapter *adapter, int i)
+sume_modreg_write_locked(struct sume_adapter *adapter)
 {
+	struct riffa_chnl_dir *send = adapter->send[SUME_RIFFA_CHANNEL_REG];
+
 	/* Let the FPGA know about the transfer. */
-	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_OFFLAST_REG_OFF),
-	    SUME_OFFLAST);
-	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_LEN_REG_OFF),
-	    adapter->send[i]->len);	/* words */
+	write_reg(adapter, RIFFA_CHNL_REG(SUME_RIFFA_CHANNEL_REG,
+	    RIFFA_RX_OFFLAST_REG_OFF), SUME_OFFLAST);
+	write_reg(adapter, RIFFA_CHNL_REG(SUME_RIFFA_CHANNEL_REG,
+	    RIFFA_RX_LEN_REG_OFF), send->len);	/* words */
 
 	/* Fill the bouncebuf "descriptor". */
-	sume_fill_bb_desc(adapter, adapter->send[i],
-	    SUME_RIFFA_LEN(adapter->send[i]->len));
+	sume_fill_bb_desc(adapter, send, SUME_RIFFA_LEN(send->len));
 
 	/* Update the state before intiating the DMA to avoid races. */
-	adapter->send[i]->state = SUME_RIFFA_CHAN_STATE_READY;
+	send->state = SUME_RIFFA_CHAN_STATE_READY;
 
-	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
+	bus_dmamap_sync(send->my_tag, send->my_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	/* DMA. */
-	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_LO_REG_OFF),
-	    SUME_RIFFA_LO_ADDR(adapter->send[i]->buf_hw_addr));
-	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_HI_REG_OFF),
-	    SUME_RIFFA_HI_ADDR(adapter->send[i]->buf_hw_addr));
-	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_LEN_REG_OFF),
-	    4 * adapter->send[i]->num_sg);
-	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
+	write_reg(adapter, RIFFA_CHNL_REG(SUME_RIFFA_CHANNEL_REG,
+	    RIFFA_RX_SG_ADDR_LO_REG_OFF),
+	    SUME_RIFFA_LO_ADDR(send->buf_hw_addr));
+	write_reg(adapter, RIFFA_CHNL_REG(SUME_RIFFA_CHANNEL_REG,
+	    RIFFA_RX_SG_ADDR_HI_REG_OFF),
+	    SUME_RIFFA_HI_ADDR(send->buf_hw_addr));
+	write_reg(adapter, RIFFA_CHNL_REG(SUME_RIFFA_CHANNEL_REG,
+	    RIFFA_RX_SG_LEN_REG_OFF), 4 * send->num_sg);
+	bus_dmamap_sync(send->my_tag, send->my_map,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
 	return (0);
@@ -806,9 +774,14 @@ sume_module_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 {
 	struct sume_adapter *adapter;
 	struct nf_regop_data *data;
-	int error, i;
+	int error;
+	struct riffa_chnl_dir *send;
+
+	KASSERT(nf_priv->riffa_channel == SUME_RIFFA_CHANNEL_REG,
+	    ("write on non-reg channel"));
 
 	adapter = nf_priv->adapter;
+	send = adapter->send[SUME_RIFFA_CHANNEL_REG];
 
 	/*
 	 * 1. Make sure the channel is free;  otherwise return EBUSY.
@@ -817,38 +790,36 @@ sume_module_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 	 * 3. Start the DMA process.
 	 * 4. Sleep and wait for result and return success or error.
 	 */
-	i = SUME_RIFFA_CHANNEL_REG;
 	SUME_LOCK(adapter);
 
-	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
+	if (send->state != SUME_RIFFA_CHAN_STATE_IDLE) {
 		SUME_UNLOCK(adapter);
 		return (EBUSY);
 	}
 
-	data = (struct nf_regop_data *) (adapter->send[i]->buf_addr +
+	data = (struct nf_regop_data *) (send->buf_addr +
 	    sizeof(struct nf_bb_desc));
 	data->addr = htole32(sifr->addr);
 	data->val = htole32(sifr->val);
 	/* Tag to indentify request. */
-	data->rtag = htole32(++adapter->send[i]->rtag);
+	data->rtag = htole32(++send->rtag);
 	data->strb = htole32(strb);
-	adapter->send[i]->len = 4;	/* words */
+	send->len = 4;	/* words */
 
-	error = sume_modreg_write_locked(adapter, i);
+	error = sume_modreg_write_locked(adapter);
 	if (error) {
 		SUME_UNLOCK(adapter);
 		return (EFAULT);
 	}
 
 	/* Timeout after 1s. */
-	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_LEN) {
-		error = msleep(&adapter->send[i]->event, &adapter->lock, 0,
+	if (send->state != SUME_RIFFA_CHAN_STATE_LEN)
+		error = msleep(&send->event, &adapter->lock, 0,
 		    "Waiting recv finish", 1 * hz);
-	}
 
 	/* This was a write so we are done; were interrupted, or timed out. */
 	if (strb != 0x00 || error != 0 || error == EWOULDBLOCK) {
-		adapter->send[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
+		send->state = SUME_RIFFA_CHAN_STATE_IDLE;
 		if (strb == 0x00)
 			error = EWOULDBLOCK;
 		else
@@ -874,10 +845,16 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 {
 	struct sume_adapter *adapter;
 	struct nf_regop_data *data;
-	int error = 0, i;
+	int error = 0;
 	device_t dev;
+	struct riffa_chnl_dir *recv, *send;
+
+	KASSERT(nf_priv->riffa_channel == SUME_RIFFA_CHANNEL_REG,
+	    ("write on non-reg channel"));
 
 	adapter = nf_priv->adapter;
+	recv = adapter->recv[SUME_RIFFA_CHANNEL_REG];
+	send = adapter->send[SUME_RIFFA_CHANNEL_REG];
 	dev = adapter->dev;
 
 	/*
@@ -886,29 +863,25 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	 * 2. Read DMA results.
 	 * 3. Update state on *TX* to IDLE to allow next read to start.
 	 */
-	i = SUME_RIFFA_CHANNEL_REG;
-
 	SUME_LOCK(adapter);
 
-	bus_dmamap_sync(adapter->recv[i]->my_tag, adapter->recv[i]->my_map,
+	bus_dmamap_sync(recv->my_tag, recv->my_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	/*
 	 * We only need to be woken up at the end of the transaction.
 	 * Timeout after 1s.
 	 */
-	if (adapter->recv[i]->state != SUME_RIFFA_CHAN_STATE_READ) {
-		error = msleep(&adapter->recv[i]->event, &adapter->lock, 0,
+	if (recv->state != SUME_RIFFA_CHAN_STATE_READ)
+		error = msleep(&recv->event, &adapter->lock, 0,
 		    "Waiting transaction finish", 1 * hz);
-	}
 
-	if (adapter->recv[i]->state != SUME_RIFFA_CHAN_STATE_READ ||
-	    error == EWOULDBLOCK) {
+	if (recv->state != SUME_RIFFA_CHAN_STATE_READ || error == EWOULDBLOCK) {
 		SUME_UNLOCK(adapter);
 		device_printf(dev, "%s: wait error: %d\n", __func__, error);
 		return (EWOULDBLOCK);
 	}
 
-	bus_dmamap_sync(adapter->recv[i]->my_tag, adapter->recv[i]->my_map,
+	bus_dmamap_sync(recv->my_tag, recv->my_map,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
 	/*
@@ -916,17 +889,18 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	 * Note: we do access the send side without lock but the state
 	 * machine does prevent the data from changing.
 	 */
-	data = (struct nf_regop_data *) (adapter->recv[i]->buf_addr +
+	data = (struct nf_regop_data *) (recv->buf_addr +
 		sizeof(struct nf_bb_desc));
-	if (le32toh(data->rtag) != adapter->send[i]->rtag) {
+
+	if (le32toh(data->rtag) != send->rtag)
 		device_printf(dev, "%s: rtag error: 0x%08x 0x%08x\n", __func__,
-		    le32toh(data->rtag), adapter->send[i]->rtag);
-	}
+		    le32toh(data->rtag), send->rtag);
+
 	sifr->val = le32toh(data->val);
-	adapter->recv[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
+	recv->state = SUME_RIFFA_CHAN_STATE_IDLE;
 
 	/* We are done. */
-	adapter->send[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
+	send->state = SUME_RIFFA_CHAN_STATE_IDLE;
 
 	SUME_UNLOCK(adapter);
 
@@ -1015,6 +989,7 @@ sume_media_change(struct ifnet *ifp)
 
 	if (IFM_TYPE(ifm->ifm_media) != IFM_ETHER)
 		return (EINVAL);
+
 	if (IFM_SUBTYPE(ifm->ifm_media) == IFM_10G_SR)
 		ifp->if_baudrate = ifmedia_baudrate(IFM_ETHER | IFM_10G_SR);
 	else
@@ -1134,9 +1109,10 @@ sume_if_start_locked(struct ifnet *ifp)
 	mdata->t2 = htole32(0);
 
 	/* Let the FPGA know about the transfer. */
-	write_reg(adapter, RIFFA_CHNL_REG(0, RIFFA_RX_OFFLAST_REG_OFF),
-	    SUME_OFFLAST);
-	write_reg(adapter, RIFFA_CHNL_REG(0, RIFFA_RX_LEN_REG_OFF), send->len);
+	write_reg(adapter, RIFFA_CHNL_REG(SUME_RIFFA_CHANNEL_DATA,
+	    RIFFA_RX_OFFLAST_REG_OFF), SUME_OFFLAST);
+	write_reg(adapter, RIFFA_CHNL_REG(SUME_RIFFA_CHANNEL_DATA,
+	    RIFFA_RX_LEN_REG_OFF), send->len);
 
 	/* Fill the bouncebuf "descriptor". */
 	sume_fill_bb_desc(adapter, send, SUME_RIFFA_LEN(send->len));
@@ -1148,12 +1124,14 @@ sume_if_start_locked(struct ifnet *ifp)
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 	/* DMA. */
-	write_reg(adapter, RIFFA_CHNL_REG(0, RIFFA_RX_SG_ADDR_LO_REG_OFF),
+	write_reg(adapter, RIFFA_CHNL_REG(SUME_RIFFA_CHANNEL_DATA,
+	    RIFFA_RX_SG_ADDR_LO_REG_OFF),
 	    SUME_RIFFA_LO_ADDR(send->buf_hw_addr));
-	write_reg(adapter, RIFFA_CHNL_REG(0, RIFFA_RX_SG_ADDR_HI_REG_OFF),
+	write_reg(adapter, RIFFA_CHNL_REG(SUME_RIFFA_CHANNEL_DATA,
+	    RIFFA_RX_SG_ADDR_HI_REG_OFF),
 	    SUME_RIFFA_HI_ADDR(send->buf_hw_addr));
-	write_reg(adapter, RIFFA_CHNL_REG(0, RIFFA_RX_SG_LEN_REG_OFF),
-	    4 * send->num_sg);
+	write_reg(adapter, RIFFA_CHNL_REG(SUME_RIFFA_CHANNEL_DATA,
+	    RIFFA_RX_SG_LEN_REG_OFF), 4 * send->num_sg);
 
 	bus_dmamap_sync(send->my_tag, send->my_map,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
@@ -1174,7 +1152,9 @@ sume_if_start(struct ifnet *ifp)
 {
 	struct nf_priv *nf_priv = ifp->if_softc;
 	struct sume_adapter *adapter = nf_priv->adapter;
-	int i = nf_priv->riffa_channel;
+
+	KASSERT(nf_priv->riffa_channel == SUME_RIFFA_CHANNEL_DATA,
+	    ("TX on non-data channel"));
 
 	if (!adapter->running)
 		return;
@@ -1182,12 +1162,9 @@ sume_if_start(struct ifnet *ifp)
 		return;
 
 	SUME_LOCK(adapter);
-	if (adapter->send[i]->state != SUME_RIFFA_CHAN_STATE_IDLE) {
+	if (adapter->send[SUME_RIFFA_CHANNEL_DATA]->state !=
+	    SUME_RIFFA_CHAN_STATE_IDLE) {
 		SUME_UNLOCK(adapter);
-		if (sume_debug)
-			device_printf(adapter->dev, "%s: SUME not in IDLE "
-			    "state (state %d)\n", __func__,
-			    adapter->send[i]->state);
 		return;
 	}
 
