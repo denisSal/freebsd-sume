@@ -83,6 +83,7 @@
 #define	SUME_RIFFA_MAGIC		0xcafe
 
 /* Accessor macros. */
+#define	SUME_OFFLAST			((0 << 1) | (1 & 0x01))
 #define	SUME_RIFFA_LAST(offlast)	((offlast) & 0x01)
 #define	SUME_RIFFA_OFFSET(offlast)	((uint64_t)((offlast) >> 1) << 2)
 #define	SUME_RIFFA_LEN(len)		((uint64_t)(len) << 2)

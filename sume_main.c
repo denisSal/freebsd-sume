@@ -146,7 +146,6 @@ static driver_t sume_driver = {
  * transactions. For writing, by calling the sume_module_reg_write(). For
  * reading, by calling the sume_module_reg_write() and then
  * sume_module_reg_read(). Check those functions for more information.
- *
  */
 
 MALLOC_DECLARE(M_SUME);
@@ -334,7 +333,7 @@ void
 sume_intr_handler(void *arg)
 {
 	struct sume_adapter *adapter = arg;
-	uint32_t vect, vect0, vect1, len;
+	uint32_t vect, vect0, len;
 	int i, loops;
 	device_t dev = adapter->dev;
 	struct mbuf *m = NULL;
@@ -347,24 +346,13 @@ sume_intr_handler(void *arg)
 		SUME_UNLOCK(adapter);
 		return;
 	}
-	if (adapter->num_chnls > 6) {
-		vect1 = read_reg(adapter, RIFFA_IRQ_REG1_OFF);
-		if ((vect1 & SUME_INVALID_VECT) != 0) {
-			SUME_UNLOCK(adapter);
-			return;
-		}
-	} else
-		vect1 = 0;
 
 	/*
 	 * We only have one interrupt for all channels and no way
 	 * to quickly lookup for which channel(s) we got an interrupt?
 	 */
-	for (i = 0; i < adapter->num_chnls; i++) {
-		if (i < 6)
-			vect = vect0 >> (5 * i);
-		else
-			vect = vect1 >> (5 * i);
+	for (i = 0; i < SUME_RIFFA_CHANNELS; i++) {
+		vect = vect0 >> (5 * i);
 
 		loops = 0;
 		while ((vect & (SUME_MSI_TXBUF | SUME_MSI_TXDONE)) &&
@@ -703,7 +691,6 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 	    PCIEM_LINK_CTL_RCB), 2);
 
 	reg = read_reg(adapter, RIFFA_INFO_REG_OFF);
-	adapter->num_chnls =	SUME_RIFFA_CHANNELS;
 	adapter->num_sg =	RIFFA_SG_ELEMS * ((reg >> 19) & 0xf);
 	adapter->sg_buf_size =	RIFFA_SG_BUF_SIZE * ((reg >> 19) & 0xf);
 
@@ -778,13 +765,9 @@ sume_fill_bb_desc(struct sume_adapter *adapter, struct riffa_chnl_dir *p,
 static int
 sume_modreg_write_locked(struct sume_adapter *adapter, int i)
 {
-	int last, offset;
-
 	/* Let the FPGA know about the transfer. */
-	offset = 0;
-	last = 1;
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_OFFLAST_REG_OFF),
-	    ((offset << 1) | (last & 0x01)));
+	    SUME_OFFLAST);
 	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_LEN_REG_OFF),
 	    adapter->send[i]->len);	/* words */
 
@@ -1068,9 +1051,8 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 		return;
 
 	link_status = (sifr.val >> 12) & 0x1;
-	if (link_status) {
+	if (link_status)
 		ifmr->ifm_status |= IFM_ACTIVE;
-	}
 
 	return;
 }
@@ -1090,36 +1072,37 @@ sume_if_start_locked(struct ifnet *ifp)
 	struct mbuf *m;
 	struct nf_priv *nf_priv = ifp->if_softc;
 	struct sume_adapter *adapter = nf_priv->adapter;
+	struct riffa_chnl_dir *send = adapter->send[SUME_RIFFA_CHANNEL_DATA];
 	uint8_t *outbuf;
-	int i, last, offset;
 	device_t dev;
 	struct nf_metadata *mdata;
-	int padlen = SUME_MIN_PKT_SIZE;
+	int plen = SUME_MIN_PKT_SIZE;
+
+	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
+	KASSERT(nf_priv->riffa_channel == SUME_RIFFA_CHANNEL_DATA,
+	    ("TX on non-data channel"));
 
 	IFQ_DRV_DEQUEUE(&ifp->if_snd, m);
 	if (m == NULL)
 		return (EINVAL);
 
-	i = nf_priv->riffa_channel;
+	KASSERT(send->state == SUME_RIFFA_CHAN_STATE_IDLE,
+	    ("SUME not in IDLE state"));
+
 	dev = adapter->dev;
 
 	/* Packets large enough do not need to be padded */
 	if (m->m_pkthdr.len > SUME_MIN_PKT_SIZE)
-		padlen = m->m_pkthdr.len;
+		plen = m->m_pkthdr.len;
 
 	if (sume_debug)
-		printf("Sending %d bytes to nf%d\n", padlen, nf_priv->port);
-	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
+		printf("Sending %d bytes to nf%d\n", plen, nf_priv->port);
 
-	outbuf = (uint8_t *) adapter->send[i]->buf_addr + sizeof(struct
-		nf_bb_desc);
+	outbuf = (uint8_t *) send->buf_addr + sizeof(struct nf_bb_desc);
 	mdata = (struct nf_metadata *) outbuf;
 
-	KASSERT(adapter->send[i]->state == SUME_RIFFA_CHAN_STATE_IDLE,
-	    ("SUME not in IDLE state"));
-
 	/* Clear the recovery flag. */
-	adapter->send[i]->flags &= ~SUME_CHAN_STATE_RECOVERY_FLAG;
+	send->flags &= ~SUME_CHAN_STATE_RECOVERY_FLAG;
 
 	/* Make sure we fit with the 16 bytes nf_metadata. */
 	if ((m->m_pkthdr.len + sizeof(struct nf_metadata)) >
@@ -1131,58 +1114,53 @@ sume_if_start_locked(struct ifnet *ifp)
 		return (ENOMEM);
 	}
 
-	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
+	bus_dmamap_sync(send->my_tag, send->my_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 	/* Zero out the padded data */
-	bzero(outbuf + sizeof(struct nf_metadata), SUME_MIN_PKT_SIZE);
+	if (m->m_pkthdr.len < SUME_MIN_PKT_SIZE)
+		bzero(outbuf + sizeof(struct nf_metadata), SUME_MIN_PKT_SIZE);
 	/* Skip the first 16 bytes for the metadata. */
 	m_copydata(m, 0, m->m_pkthdr.len, outbuf + sizeof(struct nf_metadata));
-	adapter->send[i]->len = sizeof(struct nf_metadata) / 4;	/* words */
-	adapter->send[i]->len += (padlen / 4) +
-	    ((padlen % 4 == 0) ? 0 : 1);
+	send->len = (sizeof(struct nf_metadata) + plen + 3) / 4;
 
-	/* Fill in the metadata. */
-	mdata->sport = htole16(
-	    1 << (nf_priv->port * 2 + 1)); /* CPU(DMA) ports are odd. */
-	mdata->dport = htole16(
-	    1 << (nf_priv->port * 2)); /* MAC ports are even. */
-	mdata->plen = htole16(padlen);
+	/* Fill in the metadata: CPU(DMA) ports are odd, MAC ports are even. */
+	mdata->sport = htole16(1 << (nf_priv->port * 2 + 1));
+	mdata->dport = htole16(1 << (nf_priv->port * 2));
+	mdata->plen = htole16(plen);
 	mdata->magic = htole16(SUME_RIFFA_MAGIC);
 	mdata->t1 = htole32(0);
 	mdata->t2 = htole32(0);
 
 	/* Let the FPGA know about the transfer. */
-	offset = 0;
-	last = 1;
-	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_OFFLAST_REG_OFF),
-	    ((offset << 1) | (last & 0x01)));
-	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_LEN_REG_OFF),
-	    adapter->send[i]->len);		/* words */
+	write_reg(adapter, RIFFA_CHNL_REG(0, RIFFA_RX_OFFLAST_REG_OFF),
+	    SUME_OFFLAST);
+	write_reg(adapter, RIFFA_CHNL_REG(0, RIFFA_RX_LEN_REG_OFF), send->len);
 
 	/* Fill the bouncebuf "descriptor". */
-	sume_fill_bb_desc(adapter, adapter->send[i],
-	    SUME_RIFFA_LEN(adapter->send[i]->len));
+	sume_fill_bb_desc(adapter, send, SUME_RIFFA_LEN(send->len));
 
 	/* Update the state before intiating the DMA to avoid races. */
-	adapter->send[i]->state = SUME_RIFFA_CHAN_STATE_READY;
+	send->state = SUME_RIFFA_CHAN_STATE_READY;
 
-	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
+	bus_dmamap_sync(send->my_tag, send->my_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
-	/* DMA. */
-	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_LO_REG_OFF),
-	    SUME_RIFFA_LO_ADDR(adapter->send[i]->buf_hw_addr));
-	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_ADDR_HI_REG_OFF),
-	    SUME_RIFFA_HI_ADDR(adapter->send[i]->buf_hw_addr));
-	write_reg(adapter, RIFFA_CHNL_REG(i, RIFFA_RX_SG_LEN_REG_OFF),
-	    4 * adapter->send[i]->num_sg);
 
-	bus_dmamap_sync(adapter->send[i]->my_tag, adapter->send[i]->my_map,
+	/* DMA. */
+	write_reg(adapter, RIFFA_CHNL_REG(0, RIFFA_RX_SG_ADDR_LO_REG_OFF),
+	    SUME_RIFFA_LO_ADDR(send->buf_hw_addr));
+	write_reg(adapter, RIFFA_CHNL_REG(0, RIFFA_RX_SG_ADDR_HI_REG_OFF),
+	    SUME_RIFFA_HI_ADDR(send->buf_hw_addr));
+	write_reg(adapter, RIFFA_CHNL_REG(0, RIFFA_RX_SG_LEN_REG_OFF),
+	    4 * send->num_sg);
+
+	bus_dmamap_sync(send->my_tag, send->my_map,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
-	/* We can free as long as we use the bounce buffer. */
 	nf_priv->stats.tx_packets++;
-	nf_priv->stats.tx_bytes += padlen;
+	nf_priv->stats.tx_bytes += plen;
+
+	/* We can free as long as we use the bounce buffer. */
 	m_freem(m);
 
 	adapter->last_ifc = nf_priv->port;
@@ -1220,14 +1198,14 @@ sume_if_start(struct ifnet *ifp)
 static void
 check_queues(struct sume_adapter *adapter)
 {
-	int i, last;
+	int i, last_ifc;
 
 	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
 
-	last = adapter->last_ifc;
+	last_ifc = adapter->last_ifc;
 
 	/* Check all interfaces */
-	for (i = last+1; i < last + sume_nports + 1; i++) {
+	for (i = last_ifc+1; i < last_ifc + sume_nports + 1; i++) {
 		struct ifnet *ifp = adapter->ifp[i %sume_nports];
 
 		if ((ifp->if_drv_flags & (IFF_DRV_RUNNING | IFF_DRV_OACTIVE)) !=
@@ -1309,7 +1287,7 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 	device_t dev = adapter->dev;
 
 	error = ENOMEM;
-	*p = (struct riffa_chnl_dir **) malloc(adapter->num_chnls *
+	*p = (struct riffa_chnl_dir **) malloc(SUME_RIFFA_CHANNELS *
 	    sizeof(struct riffa_chnl_dir *), M_SUME, M_ZERO | M_WAITOK);
 	if (*p == NULL) {
 		device_printf(dev, "%s: malloc(%s) failed.\n", __func__, dir);
@@ -1318,7 +1296,7 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 
 	rp = *p;
 	/* Allocate the chnl_dir structs themselves. */
-	for (i = 0; i < adapter->num_chnls; i++) {
+	for (i = 0; i < SUME_RIFFA_CHANNELS; i++) {
 		/* One direction. */
 		rp[i] = (struct riffa_chnl_dir *)
 		    malloc(sizeof(struct riffa_chnl_dir), M_SUME,
@@ -1519,7 +1497,7 @@ sume_remove_riffa_buffer(const struct sume_adapter *adapter,
 {
 	int i;
 
-	for (i = 0; i < adapter->num_chnls; i++) {
+	for (i = 0; i < SUME_RIFFA_CHANNELS; i++) {
 		if (pp[i] == NULL)
 			continue;
 
