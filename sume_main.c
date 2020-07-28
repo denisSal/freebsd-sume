@@ -251,6 +251,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, int i, uint32_t len)
 		device_printf(dev, "%s: corrupted packet (%zd + %d > %d "
 		    "|| magic 0x%04x != 0x%04x)\n", __func__, sizeof(struct
 		    nf_metadata), plen, len, magic, SUME_RIFFA_MAGIC);
+		return (NULL);
 	}
 
 	/* We got the packet from one of the even bits */
