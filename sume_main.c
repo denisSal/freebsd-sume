@@ -1176,8 +1176,7 @@ sume_if_start(struct ifnet *ifp)
 	struct sume_adapter *adapter = nf_priv->adapter;
 	int i = nf_priv->riffa_channel;
 
-	if ((ifp->if_drv_flags & (IFF_DRV_RUNNING | IFF_DRV_OACTIVE)) !=
-	    IFF_DRV_RUNNING)
+	if (!adapter->running)
 		return;
 	if (!(ifp->if_flags & IFF_UP))
 		return;
@@ -1203,15 +1202,15 @@ check_queues(struct sume_adapter *adapter)
 
 	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
 
+	if (!adapter->running)
+		return;
+
 	last_ifc = adapter->last_ifc;
 
 	/* Check all interfaces */
 	for (i = last_ifc+1; i < last_ifc + sume_nports + 1; i++) {
 		struct ifnet *ifp = adapter->ifp[i %sume_nports];
 
-		if ((ifp->if_drv_flags & (IFF_DRV_RUNNING | IFF_DRV_OACTIVE)) !=
-		    IFF_DRV_RUNNING)
-			continue;
 		if (!(ifp->if_flags & IFF_UP))
 			continue;
 
@@ -1539,7 +1538,7 @@ sume_detach(device_t dev)
 		if (ifp == NULL)
 			continue;
 
-		ifp->if_drv_flags &= ~(IFF_DRV_RUNNING | IFF_DRV_OACTIVE);
+		ifp->if_drv_flags &= ~IFF_DRV_RUNNING;
 		nf_priv = ifp->if_softc;
 		if (nf_priv != NULL) {
 			if (ifp->if_flags & IFF_UP)
