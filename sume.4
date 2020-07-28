@@ -5,23 +5,21 @@
 .Os
 .Sh NAME
 .Nm sume
-.Nd "NetFPGA SUME 4x10Gb Ethernet driver for the FreeBSD operating system"
+.Nd "NetFPGA SUME 4x10Gb Ethernet driver"
 .Sh SYNOPSIS
-.\" To compile this driver into the kernel,
-.\" place the following lines in your
-.\" kernel configuration file:
-.\" .Bd -ragged -offset indent
-.\" .Cd "device sume"
-.\" .Ed
-.\" .Pp
-.\" Alternatively, to load the driver as a
-.\" module at boot time, place the following line in
-.\" .Xr loader.conf 5 :
-.\" .Bd -literal -offset indent
-.\" if_sume_load="YES"
-.\" .Ed
-To compile this driver and load it into the kernel, run:
-.Dl # make load
+To compile this driver into the kernel,
+place the following lines in your
+kernel configuration file:
+.Bd -ragged -offset indent
+.Cd "device sume"
+.Ed
+.Pp
+Alternatively, to load the driver as a
+module at boot time, place the following line in
+.Xr loader.conf 5 :
+.Bd -literal -offset indent
+if_sume_load="YES"
+.Ed
 .Sh DESCRIPTION
 The
 .Nm
@@ -41,11 +39,12 @@ The default (and maximum) number of created interfaces is 4. This can be
 configured at load time with the kernel environment variable sume.nports:
 .Dl # kenv sume.nports=4
 .Sh SEE ALSO
-.Xr ifconfig 8
-.Sh BUGS
-The SUME board only has a limited-size FIFO for ingress / egress packets and no
-queues so it is possible that incoming packets will be overwritten and
-scrambled at higher packet rates.
+.Xr arp 4 ,
+.Xr ifconfig 8 ,
+.Xr netgraph 4 ,
+.Xr netintro 4 ,
+.Xr ng_ether 4 ,
+.Xr vlan 4
 .Sh AUTHOR
 The original Linux NetFPGA SUME driver was originally written by Bjoern A.
 Zeeb. The FreeBSD version is written by Denis Salopek as a GSoC project. More
