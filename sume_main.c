@@ -1072,7 +1072,7 @@ sume_if_start_locked(struct ifnet *ifp)
 		plen = m->m_pkthdr.len;
 
 	if (sume_debug)
-		printf("Sending %d bytes to nf%d\n", plen, nf_priv->port);
+		printf("Sending %d bytes to nf%d\n", plen, nf_priv->unit);
 
 	outbuf = (uint8_t *) send->buf_addr + sizeof(struct nf_bb_desc);
 	mdata = (struct nf_metadata *) outbuf;
@@ -1199,7 +1199,7 @@ check_queues(struct sume_adapter *adapter)
 static int
 sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 {
-	struct ifnet *ifp;	
+	struct ifnet *ifp;
 	struct nf_priv *nf_priv = malloc(sizeof(struct nf_priv), M_SUME,
 	    M_ZERO | M_WAITOK);
 	device_t dev = adapter->dev;
@@ -1213,7 +1213,11 @@ sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 	adapter->ifp[port] = ifp;
 	ifp->if_softc = nf_priv;
 
-	if_initname(ifp, SUME_ETH_DEVICE_NAME, port);
+	nf_priv->unit = alloc_unrl(adapter->unr);
+	if (nf_priv->unit == -1)
+		return (EBUSY);
+
+	if_initname(ifp, SUME_ETH_DEVICE_NAME, nf_priv->unit);
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
 
 	ifp->if_init = sume_if_init;
@@ -1226,7 +1230,7 @@ sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 	nf_priv->riffa_channel = SUME_RIFFA_CHANNEL_DATA;
 
 	uint8_t hw_addr[ETHER_ADDR_LEN] = DEFAULT_ETHER_ADDRESS;
-	hw_addr[ETHER_ADDR_LEN-1] = port;
+	hw_addr[ETHER_ADDR_LEN-1] = nf_priv->unit;
 	ether_ifattach(ifp, hw_addr);
 
 	ifmedia_init(&nf_priv->media, IFM_IMASK, sume_media_change,
@@ -1440,6 +1444,8 @@ sume_attach(device_t dev)
 	if (error != 0)
 		goto error;
 
+	adapter->unr = new_unrhdr(0, INT_MAX, NULL);
+
 	/* Now do the network interfaces. */
 	for (i = 0; i < sume_nports; i++) {
 		error = sume_ifp_alloc(adapter, i);
@@ -1509,6 +1515,9 @@ sume_detach(device_t dev)
 	KASSERT(mtx_initialized(&adapter->lock), ("SUME mutex not "
 	    "initialized"));
 	adapter->running = 0;
+
+	clear_unrhdr(adapter->unr);
+	delete_unrhdr(adapter->unr);
 
 	for (i = 0; i < sume_nports; i++) {
 		struct ifnet *ifp = adapter->ifp[i];

@@ -147,6 +147,7 @@ struct sume_ifreq {
 struct nf_priv {
 	struct sume_adapter	*adapter;
 	struct ifnet		*ifp;
+	uint32_t		unit;
 	uint32_t		port;
 	uint32_t		riffa_channel;
 	struct ifmedia		media;
@@ -175,6 +176,8 @@ struct sume_adapter {
 
 	uint64_t		packets_err;
 	uint64_t		bytes_err;
+
+	struct unrhdr		*unr;
 };
 
 /* SUME metadata:
