@@ -710,7 +710,6 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 static void
 sume_if_init(void *sc)
 {
-
 }
 
 /* Helper functions. */
@@ -1026,7 +1025,7 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 	if (error)
 		return;
 
-	link_status = (sifr.val >> 12) & 0x1;
+	link_status = SUME_NF_LINK_STATUS(sifr.val);
 	if (link_status)
 		ifmr->ifm_status |= IFM_ACTIVE;
 
