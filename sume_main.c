@@ -1052,9 +1052,6 @@ sume_if_start_locked(struct ifnet *ifp)
 	struct nf_metadata *mdata;
 	int plen = SUME_MIN_PKT_SIZE;
 
-	if (sume_debug)
-		printf("Sending\n");
-
 	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
 	KASSERT(nf_priv->riffa_channel == SUME_RIFFA_CHANNEL_DATA,
 	    ("TX on non-data channel"));
