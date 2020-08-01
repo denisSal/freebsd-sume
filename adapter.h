@@ -177,8 +177,6 @@ struct sume_adapter {
 
 	uint64_t		packets_err;
 	uint64_t		bytes_err;
-
-	struct unrhdr		*unr;
 };
 
 /* SUME metadata:

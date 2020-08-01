@@ -57,6 +57,7 @@
 #include <netinet/if_ether.h>
 
 #include <sys/sysctl.h>
+#include <sys/limits.h>
 
 #include "adapter.h"
 
@@ -168,6 +169,7 @@ static int sume_module_reg_write(struct nf_priv *, struct sume_ifreq *,
 static int sume_module_reg_read(struct nf_priv *, struct sume_ifreq *);
 
 static int sume_debug;
+static struct unrhdr *unr;
 
 struct {
 	uint16_t device;
@@ -1053,6 +1055,9 @@ sume_if_start_locked(struct ifnet *ifp)
 	struct nf_metadata *mdata;
 	int plen = SUME_MIN_PKT_SIZE;
 
+	if (sume_debug)
+		printf("Sending\n");
+
 	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
 	KASSERT(nf_priv->riffa_channel == SUME_RIFFA_CHANNEL_DATA,
 	    ("TX on non-data channel"));
@@ -1212,9 +1217,7 @@ sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 	adapter->ifp[port] = ifp;
 	ifp->if_softc = nf_priv;
 
-	nf_priv->unit = alloc_unrl(adapter->unr);
-	if (nf_priv->unit == -1)
-		return (EBUSY);
+	nf_priv->unit = alloc_unr(unr);
 
 	if_initname(ifp, SUME_ETH_DEVICE_NAME, nf_priv->unit);
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
@@ -1443,7 +1446,7 @@ sume_attach(device_t dev)
 	if (error != 0)
 		goto error;
 
-	adapter->unr = new_unrhdr(0, INT_MAX, NULL);
+	unr = new_unrhdr(0, INT_MAX, NULL);
 
 	/* Now do the network interfaces. */
 	for (i = 0; i < sume_nports; i++) {
@@ -1515,9 +1518,6 @@ sume_detach(device_t dev)
 	    "initialized"));
 	adapter->running = 0;
 
-	clear_unrhdr(adapter->unr);
-	delete_unrhdr(adapter->unr);
-
 	for (i = 0; i < sume_nports; i++) {
 		struct ifnet *ifp = adapter->ifp[i];
 		if (ifp == NULL)
@@ -1529,6 +1529,7 @@ sume_detach(device_t dev)
 			if (ifp->if_flags & IFF_UP)
 				if_down(ifp);
 			ifmedia_removeall(&nf_priv->media);
+			free_unr(unr, nf_priv->unit);
 		}
 
 		ifp->if_flags &= ~IFF_UP;
@@ -1537,6 +1538,8 @@ sume_detach(device_t dev)
 		if (nf_priv != NULL)
 			free(nf_priv, M_SUME);
 	}
+
+	delete_unrhdr(unr);
 
 	sume_remove_riffa_buffers(adapter);
 
