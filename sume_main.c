@@ -152,9 +152,6 @@ static driver_t sume_driver = {
 MALLOC_DECLARE(M_SUME);
 MALLOC_DEFINE(M_SUME, "sume", "NetFPGA SUME device driver");
 
-static unsigned int sume_nports __read_mostly = SUME_PORTS_MAX;
-TUNABLE_INT("sume.nports", &sume_nports);
-
 static int mod_event(module_t, int, void *);
 void sume_intr_handler(void *);
 static int sume_intr_filter(void *);
@@ -259,7 +256,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
 
 	/* We got the packet from one of the even bits */
 	np = (ffs(dport & SUME_DPORT_MASK) >> 1) - 1;
-	if (np > sume_nports) {
+	if (np > SUME_NPORTS) {
 		device_printf(dev, "%s: invalid destination port 0x%04x"
 		    "(%d)\n", __func__, dport, np);
 		adapter->packets_err++;
@@ -1189,8 +1186,8 @@ check_queues(struct sume_adapter *adapter)
 	last_ifc = adapter->last_ifc;
 
 	/* Check all interfaces */
-	for (i = last_ifc+1; i < last_ifc + sume_nports + 1; i++) {
-		struct ifnet *ifp = adapter->ifp[i %sume_nports];
+	for (i = last_ifc + 1; i < last_ifc + SUME_NPORTS + 1; i++) {
+		struct ifnet *ifp = adapter->ifp[i % SUME_NPORTS];
 
 		if (!(ifp->if_flags & IFF_UP))
 			continue;
@@ -1374,7 +1371,7 @@ sume_sysctl_init(struct sume_adapter *adapter)
 #define	IFC_NAME_LEN 4
 	char namebuf[IFC_NAME_LEN];
 
-	for (i = sume_nports-1; i >= 0; i--) {
+	for (i = SUME_NPORTS - 1; i >= 0; i--) {
 		struct ifnet *ifp = adapter->ifp[i];
 		if (ifp == NULL)
 			continue;
@@ -1426,13 +1423,6 @@ sume_attach(device_t dev)
 	adapter->dev = dev;
 	int error, i;
 
-	/* Start with the safety check to avoid malfunctions further down. */
-	if (sume_nports < 1 || sume_nports > SUME_PORTS_MAX) {
-		device_printf(dev, "%s: sume_nports out of range: %d (1..%d). "
-		    "Using max.\n", __func__, sume_nports, SUME_PORTS_MAX);
-		sume_nports = SUME_PORTS_MAX;
-	}
-
 	mtx_init(&adapter->lock, "Global lock", NULL, MTX_DEF);
 
 	adapter->running = 0;
@@ -1449,7 +1439,7 @@ sume_attach(device_t dev)
 	unr = new_unrhdr(0, INT_MAX, NULL);
 
 	/* Now do the network interfaces. */
-	for (i = 0; i < sume_nports; i++) {
+	for (i = 0; i < SUME_NPORTS; i++) {
 		error = sume_ifp_alloc(adapter, i);
 		if (error != 0)
 			goto error;
@@ -1518,7 +1508,7 @@ sume_detach(device_t dev)
 	    "initialized"));
 	adapter->running = 0;
 
-	for (i = 0; i < sume_nports; i++) {
+	for (i = 0; i < SUME_NPORTS; i++) {
 		struct ifnet *ifp = adapter->ifp[i];
 		if (ifp == NULL)
 			continue;
