@@ -1559,6 +1559,3 @@ static devclass_t sume_devclass;
 
 DRIVER_MODULE(sume, pci, sume_driver, sume_devclass, mod_event, 0);
 MODULE_VERSION(sume, 1);
-#ifdef DEV_NETMAP
-MODULE_DEPEND(sume, netmap, 1, 1, 1);
-#endif /* DEV_NETMAP */
