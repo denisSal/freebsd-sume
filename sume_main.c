@@ -156,7 +156,6 @@ static void check_queues(struct sume_adapter *);
 static void sume_fill_bb_desc(struct sume_adapter *, struct riffa_chnl_dir *,
     uint64_t);
 
-static int sume_debug;
 static struct unrhdr *unr;
 
 static struct {
@@ -259,14 +258,14 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
 	/* If the interface is down, well, we are done. */
 	nf_priv = ifp->if_softc;
 	if (!(ifp->if_flags & IFF_UP)) {
-		if (sume_debug)
+		if (adapter->sume_debug)
 			device_printf(dev, "Device nf%d not up.\n", np);
 		adapter->packets_err++;
 		adapter->bytes_err += plen;
 		return (NULL);
 	}
 
-	if (sume_debug)
+	if (adapter->sume_debug)
 		printf("Building mbuf with length: %d\n", plen);
 
 	m = m_getm(NULL, plen, M_NOWAIT, MT_DATA);
@@ -352,7 +351,7 @@ sume_intr_handler(void *arg)
 		loops = 0;
 		while ((vect & (SUME_MSI_TXBUF | SUME_MSI_TXDONE)) &&
 		    loops <= 5) {
-			if (sume_debug)
+			if (adapter->sume_debug)
 				device_printf(dev, "%s: TX ch %d state %u "
 				    "vect = 0x%08x\n", __func__, i,
 				    send->state, vect);
@@ -420,7 +419,7 @@ sume_intr_handler(void *arg)
 		loops = 0;
 		while ((vect & (SUME_MSI_RXQUE | SUME_MSI_RXBUF |
 			SUME_MSI_RXDONE)) && loops < 5) {
-			if (sume_debug)
+			if (adapter->sume_debug)
 				device_printf(dev, "%s: RX ch %d state %u "
 				    "vect = 0x%08x\n", __func__, i,
 				    recv->state, vect);
@@ -1060,7 +1059,7 @@ sume_if_start_locked(struct ifnet *ifp)
 	if (m->m_pkthdr.len > SUME_MIN_PKT_SIZE)
 		plen = m->m_pkthdr.len;
 
-	if (sume_debug)
+	if (adapter->sume_debug)
 		printf("Sending %d bytes to nf%d\n", plen, nf_priv->unit);
 
 	outbuf = (uint8_t *) send->buf_addr + sizeof(struct nf_bb_desc);
@@ -1348,8 +1347,8 @@ sume_sysctl_init(struct sume_adapter *adapter)
 		device_printf(dev, "SYSCTL_ADD_NODE failed.\n");
 		return;
 	}
-	SYSCTL_ADD_INT(ctx, child, OID_AUTO, "debug", CTLFLAG_RW, &sume_debug,
-	    0, "debug int leaf");
+	SYSCTL_ADD_INT(ctx, child, OID_AUTO, "debug", CTLFLAG_RW,
+	    &adapter->sume_debug, 0, "debug int leaf");
 
 	/* total RX error stats */
 	SYSCTL_ADD_U64(ctx, child, OID_AUTO, "rx_epkts",
