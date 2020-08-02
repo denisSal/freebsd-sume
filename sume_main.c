@@ -152,23 +152,14 @@ static driver_t sume_driver = {
 MALLOC_DECLARE(M_SUME);
 MALLOC_DEFINE(M_SUME, "sume", "NetFPGA SUME device driver");
 
-static int mod_event(module_t, int, void *);
-void sume_intr_handler(void *);
-static int sume_intr_filter(void *);
-static int sume_if_ioctl(struct ifnet *, unsigned long, caddr_t);
-static void sume_fill_bb_desc(struct sume_adapter *,
-    struct riffa_chnl_dir *, uint64_t);
 static void check_queues(struct sume_adapter *);
-static inline uint32_t read_reg(struct sume_adapter *, int);
-static inline void write_reg(struct sume_adapter *, int, uint32_t);
-static int sume_module_reg_write(struct nf_priv *, struct sume_ifreq *,
-    uint32_t strb);
-static int sume_module_reg_read(struct nf_priv *, struct sume_ifreq *);
+static void sume_fill_bb_desc(struct sume_adapter *, struct riffa_chnl_dir *,
+    uint64_t);
 
 static int sume_debug;
 static struct unrhdr *unr;
 
-struct {
+static struct {
 	uint16_t device;
 	char *desc;
 } sume_pciids[] = {
@@ -330,7 +321,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
  * SUME_RIFFA_CHAN_STATE_READ: SUME copied data and our bouncebuffer is ready,
  * we can build the mbuf and go back to the IDLE state.
  */
-void
+static void
 sume_intr_handler(void *arg)
 {
 	struct sume_adapter *adapter = arg;
