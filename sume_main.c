@@ -1347,20 +1347,21 @@ sume_sysctl_init(struct sume_adapter *adapter)
 	device_t dev = adapter->dev;
 	struct sysctl_ctx_list *ctx = device_get_sysctl_ctx(dev);
 	struct sysctl_oid *tree = device_get_sysctl_tree(dev);
+	struct sysctl_oid_list *child = SYSCTL_CHILDREN(tree);
 	struct sysctl_oid *tmp_tree;
 	int i;
 
-	tree = SYSCTL_ADD_NODE(ctx, SYSCTL_STATIC_CHILDREN(_dev),
-	    OID_AUTO, "sume", CTLFLAG_RW, 0, "SUME top-level tree");
+	tree = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, "sume", CTLFLAG_RW,
+	    0, "SUME top-level tree");
 	if (tree == NULL) {
 		device_printf(dev, "SYSCTL_ADD_NODE failed.\n");
 		return;
 	}
-	SYSCTL_ADD_INT(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
-	    "debug", CTLFLAG_RW, &sume_debug, 0, "debug int leaf");
+	SYSCTL_ADD_INT(ctx, child, OID_AUTO, "debug", CTLFLAG_RW, &sume_debug,
+	    0, "debug int leaf");
 
 	/* total RX error stats */
-	SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tree), OID_AUTO, "rx_epkts",
+	SYSCTL_ADD_U64(ctx, child, OID_AUTO, "rx_epkts",
 	    CTLFLAG_RD, &adapter->packets_err, 0, "rx errors");
 	SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tree), OID_AUTO, "rx_ebytes",
 	    CTLFLAG_RD, &adapter->bytes_err, 0, "rx errors");
@@ -1375,9 +1376,9 @@ sume_sysctl_init(struct sume_adapter *adapter)
 
 		struct nf_priv *nf_priv = ifp->if_softc;
 
-		snprintf(namebuf, IFC_NAME_LEN, "nf%d", i);
-		tmp_tree = SYSCTL_ADD_NODE(ctx, SYSCTL_CHILDREN(tree),
-		    OID_AUTO, namebuf, CTLFLAG_RW, 0, "SUME ifc tree");
+		snprintf(namebuf, IFC_NAME_LEN, "nf%d", nf_priv->unit);
+		tmp_tree = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, namebuf,
+		    CTLFLAG_RW, 0, "SUME ifc tree");
 		if (tmp_tree == NULL) {
 			device_printf(dev, "SYSCTL_ADD_NODE failed.\n");
 			return;
@@ -1385,30 +1386,24 @@ sume_sysctl_init(struct sume_adapter *adapter)
 
 		/* RX stats */
 		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
-		    "rx_bytes", CTLFLAG_RD,
-		    &nf_priv->stats.rx_bytes, 0,
+		    "rx_bytes", CTLFLAG_RD, &nf_priv->stats.rx_bytes, 0,
 		    "rx bytes");
 		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
-		    "rx_dropped", CTLFLAG_RD,
-		    &nf_priv->stats.rx_dropped, 0,
+		    "rx_dropped", CTLFLAG_RD, &nf_priv->stats.rx_dropped, 0,
 		    "rx dropped");
 		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
-		    "rx_packets", CTLFLAG_RD,
-		    &nf_priv->stats.rx_packets, 0,
+		    "rx_packets", CTLFLAG_RD, &nf_priv->stats.rx_packets, 0,
 		    "rx packets");
 
 		/* TX stats */
 		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
-		    "tx_bytes", CTLFLAG_RD,
-		    &nf_priv->stats.tx_bytes, 0,
+		    "tx_bytes", CTLFLAG_RD, &nf_priv->stats.tx_bytes, 0,
 		    "tx bytes");
 		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
-		    "tx_dropped", CTLFLAG_RD,
-		    &nf_priv->stats.tx_dropped, 0,
+		    "tx_dropped", CTLFLAG_RD, &nf_priv->stats.tx_dropped, 0,
 		    "tx dropped");
 		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
-		    "tx_packets", CTLFLAG_RD,
-		    &nf_priv->stats.tx_packets, 0,
+		    "tx_packets", CTLFLAG_RD, &nf_priv->stats.tx_packets, 0,
 		    "tx packets");
 	}
 }
@@ -1432,8 +1427,6 @@ sume_attach(device_t dev)
 	error = sume_probe_riffa_buffers(adapter);
 	if (error != 0)
 		goto error;
-
-	unr = new_unrhdr(0, INT_MAX, NULL);
 
 	/* Now do the network interfaces. */
 	for (i = 0; i < SUME_NPORTS; i++) {
@@ -1526,8 +1519,6 @@ sume_detach(device_t dev)
 			free(nf_priv, M_SUME);
 	}
 
-	delete_unrhdr(unr);
-
 	sume_remove_riffa_buffers(adapter);
 
 	if (adapter->irq.tag)
@@ -1554,9 +1545,11 @@ mod_event(module_t mod, int cmd, void *arg)
 
 	switch (cmd) {
 	case MOD_LOAD:
+		unr = new_unrhdr(0, INT_MAX, NULL);
 		break;
 
 	case MOD_UNLOAD:
+		delete_unrhdr(unr);
 		break;
 	}
 
