@@ -104,7 +104,7 @@
 
 #define	SUME_MIN_PKT_SIZE		(ETHER_MIN_LEN - ETHER_CRC_LEN)
 
-#define	DESC 8
+#define	DESC				5
 
 struct irq {
 	struct resource		*res;
@@ -129,10 +129,9 @@ struct riffa_chnl_dir {
 	uint32_t		flags;
 	uint32_t		offlast;
 	uint32_t		len;		/* words */
-	uint32_t		rtag;
 
-	bus_dma_tag_t		my_tag;
-	bus_dmamap_t		my_map;
+	bus_dmamap_t		tx_map;
+	bus_dmamap_t		regop_map;
 
 	/* Used only for register read/write */
 	uint32_t		event;
@@ -154,7 +153,7 @@ struct nf_priv {
 };
 
 struct hw_rx_desc {
-	bus_dmamap_t		my_map;
+	bus_dmamap_t		map;
 	uint32_t		lower;
 	uint32_t		upper;
 	uint32_t		nseg;
@@ -188,14 +187,33 @@ struct sume_adapter {
 	struct riffa_chnl_dir	**recv;
 	struct riffa_chnl_dir	**send;
 
+	struct riffa_chnl_dir	*tx;
+	struct riffa_chnl_dir	*regop;
+
 	uint32_t		last_ifc;
 
 	uint64_t		packets_err;
 	uint64_t		bytes_err;
-	bus_dma_tag_t		btag;
-	bus_dma_tag_t		bbtag;
+
+	bus_dma_tag_t		my_tag;
+
+	/* Bouncebuffer DMA stuff. */
+	struct nf_bb_desc	*bb_addr;
+	bus_addr_t		bb_hw_addr;
+	bus_dmamap_t		bb_map;
 
 	struct rx_desc		*rx;
+	uint32_t		rx_state;
+	uint32_t		rx_flags;
+	uint32_t		rx_offlast;
+	uint32_t		rx_len;
+
+	uint32_t		tx_state;
+	uint32_t		tx_flags;
+	uint32_t		tx_offlast;
+	uint32_t		tx_len;
+	uint32_t		rtag;
+
 	struct rx_desc		*cur;
 	struct rx_desc		*head;
 	struct rx_desc		*tail;
