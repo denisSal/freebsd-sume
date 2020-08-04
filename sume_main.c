@@ -26,38 +26,28 @@
  */
 
 #include <sys/param.h>
-#include <sys/time.h>
-#include <sys/kernel.h>
 #include <sys/bus.h>
+#include <sys/endian.h>
+#include <sys/kernel.h>
+#include <sys/limits.h>
 #include <sys/module.h>
-#include <sys/malloc.h>
+#include <sys/rman.h>
+#include <sys/socket.h>
+#include <sys/sockio.h>
+#include <sys/sysctl.h>
+
+#include <net/if.h>
+#include <net/if_media.h>
+#include <net/if_types.h>
+#include <net/if_var.h>
+
+#include <netinet/in.h>
+#include <netinet/if_ether.h>
 
 #include <dev/pci/pcivar.h>
 #include <dev/pci/pcireg.h>
+
 #include <machine/bus.h>
-#include <sys/rman.h>
-
-#include <sys/socket.h>
-#include <sys/sockio.h>
-#include <net/ethernet.h>
-#include <net/if.h>
-#include <net/if_var.h>
-#include <net/if_types.h>
-
-#include <sys/endian.h>
-#include <sys/interrupt.h>
-
-#include <sys/lock.h>
-#include <sys/mutex.h>
-#include <machine/atomic.h>
-
-#include <net/if_media.h>
-#include <netinet/in.h>
-#include <netinet/in_var.h>
-#include <netinet/if_ether.h>
-
-#include <sys/sysctl.h>
-#include <sys/limits.h>
 
 #include "adapter.h"
 
