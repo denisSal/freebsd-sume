@@ -670,11 +670,12 @@ sume_intr_handler(void *arg)
 		(*ifp->if_input)(ifp, rxd->m);
 
 newround:
-		//bus_dmamap_unload(adapter->my_tag, rxd->dma.my_map);
+		bus_dmamap_unload(adapter->my_tag, rxd->dma.map);
 		rxd->m = m_getcl(M_NOWAIT, MT_DATA, M_PKTHDR);
 		if (rxd->m == NULL) {
 			if (adapter->sume_debug)
 				printf("m_getcl returned NULL\n");
+			adapter->tail = rxd;
 			break;
 		}
 
@@ -686,6 +687,7 @@ newround:
 		if (error) {
 			m_freem(rxd->m);
 			device_printf(dev, "can't map mbuf error %d\n", error);
+			adapter->tail = rxd;
 			break;
 		}
 
@@ -693,6 +695,7 @@ newround:
 			m_freem(rxd->m);
 			if (adapter->sume_debug)
 				printf("nseg != 1\n");
+			adapter->tail = rxd;
 			break;
 		}
 
