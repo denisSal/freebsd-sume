@@ -28,9 +28,7 @@
 #define	DEFAULT_ETHER_ADDRESS		"\02SUME\00"
 #define	SUME_ETH_DEVICE_NAME		"nf"
 
-#ifndef SUME_PORTS_MAX
-#define	SUME_PORTS_MAX			4
-#endif
+#define	SUME_NPORTS			4
 
 #define	SUME_IOCTL_CMD_WRITE_REG	(SIOCGPRIVATE_0)
 #define	SUME_IOCTL_CMD_READ_REG		(SIOCGPRIVATE_1)
@@ -83,6 +81,7 @@
 #define	SUME_RIFFA_MAGIC		0xcafe
 
 /* Accessor macros. */
+#define	SUME_OFFLAST			((0 << 1) | (1 & 0x01))
 #define	SUME_RIFFA_LAST(offlast)	((offlast) & 0x01)
 #define	SUME_RIFFA_OFFSET(offlast)	((uint64_t)((offlast) >> 1) << 2)
 #define	SUME_RIFFA_LEN(len)		((uint64_t)(len) << 2)
@@ -103,6 +102,9 @@
 #define	SUME_DPORT_MASK			0xaa
 
 #define	SUME_MIN_PKT_SIZE		(ETHER_MIN_LEN - ETHER_CRC_LEN)
+
+#define	SUME_NF_LINK_STATUS_ADDR(port)	(0x44040048 + port * 0x10000)
+#define	SUME_NF_LINK_STATUS(val)	((val >> 12) & 0x1)
 
 #define	DESC				5
 
@@ -145,8 +147,8 @@ struct sume_ifreq {
 struct nf_priv {
 	struct sume_adapter	*adapter;
 	struct ifnet		*ifp;
+	uint32_t		unit;
 	uint32_t		port;
-	uint32_t		port_up;
 	uint32_t		riffa_channel;
 	struct ifmedia		media;
 	struct nf_stats		stats;
@@ -177,10 +179,9 @@ struct sume_adapter {
 	bus_space_tag_t		bt;
 	bus_space_handle_t	bh;
 	struct irq		irq;
-	uint32_t		num_chnls;
 	uint32_t		num_sg;
 	uint32_t		sg_buf_size;
-	volatile int		running;
+	uint32_t		running;
 	struct ifnet		*ifp[4];
 	struct mtx		lock;
 
@@ -218,6 +219,8 @@ struct sume_adapter {
 	struct rx_desc		*head;
 	struct rx_desc		*tail;
 	uint32_t		filled;
+
+	uint32_t		sume_debug;
 };
 
 /* SUME metadata:
