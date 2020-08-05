@@ -918,14 +918,9 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 		return (ENODEV);
 
 	switch (cmd) {
+	case SIOCGIFMEDIA:
 	case SIOCGIFXMEDIA:
 		error = ifmedia_ioctl(ifp, ifr, &nf_priv->media, cmd);
-		break;
-
-	case SIOCSIFMTU:
-	case SIOCSIFADDR:
-	case SIOCAIFADDR:
-		error = ether_ioctl(ifp, cmd, data);
 		break;
 
 	case SUME_IOCTL_CMD_WRITE_REG:
@@ -964,7 +959,7 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 			break;
 
 	default:
-		error = ENOTSUP;
+		error = ether_ioctl(ifp, cmd, data);
 		break;
 	}
 
