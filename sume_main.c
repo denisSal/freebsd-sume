@@ -583,6 +583,8 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 	int error, count, capmem;
 	uint32_t reg, devctl, linkctl;
 
+	pci_enable_busmaster(dev);
+
 	adapter->rid = PCIR_BAR(0);
 	adapter->bar0_addr = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
 	    &adapter->rid, RF_ACTIVE);
