@@ -1507,6 +1507,7 @@ sume_detach(device_t dev)
 
 		ifp->if_flags &= ~IFF_UP;
 		ether_ifdetach(ifp);
+		if_free(ifp);
 
 		if (nf_priv != NULL)
 			free(nf_priv, M_SUME);
