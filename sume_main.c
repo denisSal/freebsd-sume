@@ -837,7 +837,6 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	struct sume_adapter *adapter;
 	struct nf_regop_data *data;
 	int error = 0;
-	device_t dev;
 	struct riffa_chnl_dir *recv, *send;
 
 	KASSERT(nf_priv->riffa_channel == SUME_RIFFA_CHANNEL_REG,
@@ -846,7 +845,6 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	adapter = nf_priv->adapter;
 	recv = adapter->recv[SUME_RIFFA_CHANNEL_REG];
 	send = adapter->send[SUME_RIFFA_CHANNEL_REG];
-	dev = adapter->dev;
 
 	/*
 	 * 0. Sleep waiting for result if needed (unless condition is
@@ -868,7 +866,8 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 
 	if (recv->state != SUME_RIFFA_CHAN_STATE_READ || error == EWOULDBLOCK) {
 		SUME_UNLOCK(adapter);
-		device_printf(dev, "%s: wait error: %d\n", __func__, error);
+		device_printf(adapter->dev, "%s: wait error: %d\n", __func__,
+		    error);
 		return (EWOULDBLOCK);
 	}
 
@@ -884,8 +883,8 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 		sizeof(struct nf_bb_desc));
 
 	if (le32toh(data->rtag) != send->rtag)
-		device_printf(dev, "%s: rtag error: 0x%08x 0x%08x\n", __func__,
-		    le32toh(data->rtag), send->rtag);
+		device_printf(adapter->dev, "%s: rtag error: 0x%08x 0x%08x\n",
+		    __func__, le32toh(data->rtag), send->rtag);
 
 	sifr->val = le32toh(data->val);
 	recv->state = SUME_RIFFA_CHAN_STATE_IDLE;
@@ -1036,7 +1035,6 @@ sume_if_start_locked(struct ifnet *ifp)
 	struct sume_adapter *adapter = nf_priv->adapter;
 	struct riffa_chnl_dir *send = adapter->send[SUME_RIFFA_CHANNEL_DATA];
 	uint8_t *outbuf;
-	device_t dev;
 	struct nf_metadata *mdata;
 	int plen = SUME_MIN_PKT_SIZE;
 
@@ -1051,7 +1049,6 @@ sume_if_start_locked(struct ifnet *ifp)
 	KASSERT(send->state == SUME_RIFFA_CHAN_STATE_IDLE,
 	    ("SUME not in IDLE state"));
 
-	dev = adapter->dev;
 
 	/* Packets large enough do not need to be padded */
 	if (m->m_pkthdr.len > SUME_MIN_PKT_SIZE)
@@ -1069,8 +1066,8 @@ sume_if_start_locked(struct ifnet *ifp)
 	/* Make sure we fit with the 16 bytes nf_metadata. */
 	if ((m->m_pkthdr.len + sizeof(struct nf_metadata)) >
 	    adapter->sg_buf_size) {
-		device_printf(dev, "%s: Packet too big for bounce buffer "
-		    "(%d)\n", __func__, m->m_pkthdr.len);
+		device_printf(adapter->dev, "%s: Packet too big for bounce "
+		    "buffer (%d)\n", __func__, m->m_pkthdr.len);
 		m_freem(m);
 		nf_priv->stats.tx_dropped++;
 		return (ENOMEM);
@@ -1188,11 +1185,10 @@ sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 	struct ifnet *ifp;
 	struct nf_priv *nf_priv = malloc(sizeof(struct nf_priv), M_SUME,
 	    M_ZERO | M_WAITOK);
-	device_t dev = adapter->dev;
 
 	ifp = if_alloc(IFT_ETHER);
 	if (ifp == NULL) {
-		device_printf(dev, "Cannot allocate ifnet\n");
+		device_printf(adapter->dev, "Cannot allocate ifnet\n");
 		return (ENOMEM);
 	}
 
