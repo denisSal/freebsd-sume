@@ -1506,17 +1506,6 @@ sume_attach(device_t dev)
 	/* Ready to go, "enable" IRQ. */
 	adapter->running = 1;
 
-	/* Reset the RX/TX counters. */
-	for (i = 0; i < SUME_NPORTS; i++) {
-		struct nf_priv *nf_priv = adapter->ifp[i]->if_softc;
-		struct sume_ifreq sifr;
-		sifr.addr = SUME_RESET_ADDR(i);
-		sifr.val = 1;
-		if (sume_module_reg_write(nf_priv, &sifr, 0x1f))
-			device_printf(dev, "Unable to reset module %d\n", i);
-
-	}
-
 	callout_init(&adapter->timer, 1);
 	TASK_INIT(&adapter->stat_task, 0, sume_get_stats, adapter);
 
