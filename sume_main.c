@@ -1041,14 +1041,12 @@ sume_if_start_locked(struct ifnet *ifp)
 	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
 	KASSERT(nf_priv->riffa_channel == SUME_RIFFA_CHANNEL_DATA,
 	    ("TX on non-data channel"));
+	KASSERT(send->state == SUME_RIFFA_CHAN_STATE_IDLE,
+	    ("SUME not in IDLE state"));
 
 	IFQ_DEQUEUE(&ifp->if_snd, m);
 	if (m == NULL)
 		return (EINVAL);
-
-	KASSERT(send->state == SUME_RIFFA_CHAN_STATE_IDLE,
-	    ("SUME not in IDLE state"));
-
 
 	/* Packets large enough do not need to be padded */
 	if (m->m_pkthdr.len > SUME_MIN_PKT_SIZE)
