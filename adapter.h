@@ -85,8 +85,6 @@
 #define	SUME_RIFFA_CHAN_STATE_READ	0x04
 #define	SUME_RIFFA_CHAN_STATE_LEN	0x08
 
-#define	SUME_CHAN_STATE_RECOVERY_FLAG	0x80000000
-
 /* Various bits and pieces. */
 #define	SUME_RIFFA_MAGIC		0xcafe
 
@@ -151,7 +149,7 @@ struct riffa_chnl_dir {
 	bus_addr_t		buf_hw_addr;	/* -- " -- mapped. */
 	uint32_t		num_sg;
 	uint32_t		state;
-	uint32_t		flags;
+	uint32_t		recovery;
 	uint32_t		offlast;
 	uint32_t		len;		/* words */
 	uint32_t		rtag;

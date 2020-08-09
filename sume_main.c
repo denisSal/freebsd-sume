@@ -365,8 +365,7 @@ sume_intr_handler(void *arg)
 					    "unexpected interrupt in send+3 "
 					    "state %u: vect = 0x%08x\n",
 					    __func__, i, send->state, vect);
-					send->flags |=
-					    SUME_CHAN_STATE_RECOVERY_FLAG;
+					send->recovery = 1;
 					break;
 				}
 				send->state = SUME_RIFFA_CHAN_STATE_READ;
@@ -378,8 +377,7 @@ sume_intr_handler(void *arg)
 					    "unexpected interrupt in send+4 "
 					    "state %u: vect = 0x%08x\n",
 					    __func__, i, send->state, vect);
-					send->flags |=
-					    SUME_CHAN_STATE_RECOVERY_FLAG;
+					send->recovery = 1;
 					send->state =
 					    SUME_RIFFA_CHAN_STATE_LEN;
 					break;
@@ -398,8 +396,7 @@ sume_intr_handler(void *arg)
 					    "ch %d unexpected in send+4 state "
 					    "%u: vect = 0x%08x\n", __func__, i,
 					    send->state, vect);
-					send->flags |=
-					    SUME_CHAN_STATE_RECOVERY_FLAG;
+					send->recovery = 1;
 				}
 				vect &= ~SUME_MSI_TXDONE;
 				break;
@@ -412,7 +409,7 @@ sume_intr_handler(void *arg)
 		}
 
 		if ((vect & (SUME_MSI_TXBUF | SUME_MSI_TXDONE)) &&
-		    ((send->flags & SUME_CHAN_STATE_RECOVERY_FLAG) != 0))
+		    send->recovery)
 			device_printf(dev, "%s: ignoring vect = 0x%08x during "
 			    "TX; not in recovery; state = %d loops = %d\n",
 			    __func__, vect, send->state, loops);
@@ -431,14 +428,13 @@ sume_intr_handler(void *arg)
 					    "unexpected interrupt in recv+0 "
 					    "state %u: vect = 0x%08x\n",
 					    __func__, i, recv->state, vect);
-					recv->flags |=
-					    SUME_CHAN_STATE_RECOVERY_FLAG;
+					recv->recovery = 1;
 					break;
 				}
 				uint32_t max_ptr;
 
 				/* Clear recovery state. */
-				recv->flags &= ~SUME_CHAN_STATE_RECOVERY_FLAG;
+				recv->recovery = 0;
 
 				/* Get offset and length. */
 				recv->offlast = read_reg(adapter,
@@ -492,8 +488,7 @@ sume_intr_handler(void *arg)
 					    "unexpected interrupt in recv+1 "
 					    "state %u: vect = 0x%08x\n",
 					    __func__, i, recv->state, vect);
-					recv->flags |=
-					    SUME_CHAN_STATE_RECOVERY_FLAG;
+					recv->recovery = 1;
 					break;
 				}
 				recv->state = SUME_RIFFA_CHAN_STATE_READ;
@@ -505,8 +500,7 @@ sume_intr_handler(void *arg)
 					    "unexpected interrupt in recv+2 "
 					    "state %u: vect = 0x%08x\n",
 					    __func__, i, recv->state, vect);
-					recv->flags |=
-					    SUME_CHAN_STATE_RECOVERY_FLAG;
+					recv->recovery = 1;
 					break;
 				}
 				len = read_reg(adapter, RIFFA_CHNL_REG(i,
@@ -528,8 +522,7 @@ sume_intr_handler(void *arg)
 					    "ch %d unexpected in recv+2 state "
 					    "%u: vect = 0x%08x\n", __func__, i,
 					    recv->state, vect);
-					recv->flags |=
-					    SUME_CHAN_STATE_RECOVERY_FLAG;
+					recv->recovery = 1;
 				}
 				vect &= ~SUME_MSI_RXDONE;
 				break;
@@ -542,8 +535,7 @@ sume_intr_handler(void *arg)
 		}
 
 		if ((vect & (SUME_MSI_RXQUE | SUME_MSI_RXBUF |
-		    SUME_MSI_RXDONE)) && ((recv->flags &
-		    SUME_CHAN_STATE_RECOVERY_FLAG) != 0))
+		    SUME_MSI_RXDONE)) && recv->recovery)
 			device_printf(dev, "%s: ignoring vect = 0x%08x during "
 			    "RX; not in recovery; state = %d, loops = %d\n",
 			    __func__, vect, recv->state, loops);
@@ -1059,7 +1051,7 @@ sume_if_start_locked(struct ifnet *ifp)
 	mdata = (struct nf_metadata *) outbuf;
 
 	/* Clear the recovery flag. */
-	send->flags &= ~SUME_CHAN_STATE_RECOVERY_FLAG;
+	send->recovery = 0;
 
 	/* Make sure we fit with the 16 bytes nf_metadata. */
 	if ((m->m_pkthdr.len + sizeof(struct nf_metadata)) >
