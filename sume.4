@@ -27,17 +27,18 @@ driver provides support for NetFPGA SUME Virtex-7 FPGA Development Board with
 the reference NIC bitstream loaded onto it. The HDL design for the reference
 NIC project uses the RIFFA based DMA engine to communicate with the host
 machine over PCIe. Every packet is transmitted to / from the board via one DMA
-transaction, taking two or three interrupts per one transaction which yields in
-low performance.
+transaction, taking up to two or three interrupts per one transaction which
+yields in low performance.
 
 There is no support for Jumbo frames as the hardware is capable of dealing only
 with frames with maximum size of 1514 bytes.
 
 The hardware provides no checksums and offers no other offloading.
-.Sh PARAMETERS AND OPTIONS
-The default (and maximum) number of created interfaces is 4. This can be
-configured at load time with the kernel environment variable sume.nports:
-.Dl # kenv sume.nports=4
+.Sh BUGS
+For me, the pre-built bitstream from Cambridge was not working correctly - at
+higher RX packet rates, the newly incoming packets would overwrite the ones in
+some internal FIFO so the packets would come out of the board scrambled until
+physical reset of the board.
 .Sh SEE ALSO
 .Xr arp 4 ,
 .Xr ifconfig 8 ,
