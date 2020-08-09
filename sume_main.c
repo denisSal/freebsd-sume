@@ -35,6 +35,8 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#define	STATTIMER
+
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/endian.h>
@@ -45,6 +47,9 @@
 #include <sys/socket.h>
 #include <sys/sockio.h>
 #include <sys/sysctl.h>
+#ifdef STATTIMER
+#include <sys/taskqueue.h>
+#endif
 
 #include <net/if.h>
 #include <net/if_media.h>
@@ -1000,7 +1005,7 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 
 	ifmr->ifm_status |= IFM_AVALID;
 
-	sifr.addr = SUME_NF_LINK_STATUS_ADDR(nf_priv->port);
+	sifr.addr = SUME_STATUS_ADDR(nf_priv->port);
 	sifr.val = 0;
 
 	error = sume_module_reg_write(nf_priv, &sifr, 0x00);
@@ -1011,7 +1016,7 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 	if (error)
 		return;
 
-	link_status = SUME_NF_LINK_STATUS(sifr.val);
+	link_status = SUME_LINK_STATUS(sifr.val);
 	if (link_status)
 		ifmr->ifm_status |= IFM_ACTIVE;
 
@@ -1328,6 +1333,105 @@ sume_probe_riffa_buffers(struct sume_adapter *adapter)
 	return (error);
 }
 
+static int
+get_reg_value(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
+{
+	int error;
+
+	error = sume_module_reg_write(nf_priv, sifr, 0x00);
+	if (error)
+		return (error);
+
+	error = sume_module_reg_read(nf_priv, sifr);
+	if (error)
+		return (error);
+
+	return(0);
+}
+
+#ifdef STATTIMER
+static void
+sysctl_get_rx_counter(struct ifnet *ifp)
+{
+	struct nf_priv *nf_priv;
+	struct sume_ifreq sifr;
+
+	if (!(ifp->if_flags & IFF_UP))
+		return;
+
+	nf_priv = ifp->if_softc;
+
+	sifr.addr = SUME_STAT_RX_ADDR(nf_priv->port);
+	sifr.val = 0;
+
+	if (get_reg_value(nf_priv, &sifr))
+		return;
+
+	nf_priv->stats.hw_rx_packets += sifr.val;
+}
+#else
+static int
+sysctl_get_rx_counter(SYSCTL_HANDLER_ARGS)
+{
+	struct nf_priv *nf_priv = (struct nf_priv *) arg1;
+	struct sume_ifreq sifr;
+	int error;
+	uint64_t reg;
+
+	sifr.addr = SUME_STAT_RX_ADDR(nf_priv->port);
+	sifr.val = 0;
+
+	error = get_reg_value(nf_priv, &sifr);
+	if (error)
+		return (error);
+
+	reg = nf_priv->stats.hw_rx_packets += sifr.val;
+
+	return(sysctl_handle_64(oidp, &reg, 0, req));
+}
+#endif
+
+#ifdef STATTIMER
+static void
+sysctl_get_tx_counter(struct ifnet *ifp)
+{
+	struct nf_priv *nf_priv;
+	struct sume_ifreq sifr;
+
+	if (!(ifp->if_flags & IFF_UP))
+		return;
+
+	nf_priv = ifp->if_softc;
+
+	sifr.addr = SUME_STAT_TX_ADDR(nf_priv->port);
+	sifr.val = 0;
+
+	if (get_reg_value(nf_priv, &sifr))
+		return;
+
+	nf_priv->stats.hw_tx_packets += sifr.val;
+}
+#else
+static int
+sysctl_get_tx_counter(SYSCTL_HANDLER_ARGS)
+{
+	struct nf_priv *nf_priv = (struct nf_priv *) arg1;
+	struct sume_ifreq sifr;
+	int error;
+	uint64_t reg;
+
+	sifr.addr = SUME_STAT_TX_ADDR(nf_priv->port);
+	sifr.val = 0;
+
+	error = get_reg_value(nf_priv, &sifr);
+	if (error)
+		return (error);
+
+	reg = nf_priv->stats.hw_tx_packets += sifr.val;
+
+	return(sysctl_handle_64(oidp, &reg, 0, req));
+}
+#endif
 static void
 sume_sysctl_init(struct sume_adapter *adapter)
 {
@@ -1350,8 +1454,8 @@ sume_sysctl_init(struct sume_adapter *adapter)
 	/* total RX error stats */
 	SYSCTL_ADD_U64(ctx, child, OID_AUTO, "rx_epkts",
 	    CTLFLAG_RD, &adapter->packets_err, 0, "rx errors");
-	SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tree), OID_AUTO, "rx_ebytes",
-	    CTLFLAG_RD, &adapter->bytes_err, 0, "rx errors");
+	SYSCTL_ADD_U64(ctx, child, OID_AUTO, "rx_ebytes",
+	    CTLFLAG_RD, &adapter->bytes_err, 0, "rx error bytes");
 
 #define	IFC_NAME_LEN 4
 	char namebuf[IFC_NAME_LEN];
@@ -1370,6 +1474,28 @@ sume_sysctl_init(struct sume_adapter *adapter)
 			device_printf(dev, "SYSCTL_ADD_NODE failed.\n");
 			return;
 		}
+
+#ifdef STATTIMER
+		/* HW RX stats */
+		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
+		    "hw_rx_packets", CTLFLAG_RD, &nf_priv->stats.hw_rx_packets,
+		    0, "hw_rx packets");
+
+		/* HW TX stats */
+		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
+		    "hw_tx_packets", CTLFLAG_RD, &nf_priv->stats.hw_tx_packets,
+		    0, "hw_tx packets");
+#else
+		/* HW RX stats */
+		SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
+		    "hw_rx_packets", CTLTYPE_U64 | CTLFLAG_RD, nf_priv, 0,
+		    sysctl_get_rx_counter, "LU", "hw_rx_packets");
+
+		/* HW TX stats */
+		SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
+		    "hw_tx_packets", CTLTYPE_U64 | CTLFLAG_RD, nf_priv, 0,
+		    sysctl_get_tx_counter, "LU", "hw_tx_packets");
+#endif
 
 		/* RX stats */
 		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
@@ -1394,6 +1520,30 @@ sume_sysctl_init(struct sume_adapter *adapter)
 		    "tx packets");
 	}
 }
+
+#ifdef STATTIMER
+static void
+sume_local_timer(void *arg)
+{
+	struct sume_adapter *adapter = arg;
+
+	taskqueue_enqueue(adapter->tq, &adapter->stat_task);
+	callout_reset(&adapter->timer, 1 * hz, sume_local_timer, adapter);
+}
+
+static void
+sume_get_stats(void *context, int pending)
+{
+	struct sume_adapter *adapter = context;
+	int i;
+
+	for (i = 0; i < SUME_NPORTS; i++) {
+		struct ifnet *ifp = adapter->ifp[i];
+		sysctl_get_rx_counter(ifp);
+		sysctl_get_tx_counter(ifp);
+	}
+}
+#endif
 
 static int
 sume_attach(device_t dev)
@@ -1430,6 +1580,29 @@ sume_attach(device_t dev)
 
 	/* Ready to go, "enable" IRQ. */
 	adapter->running = 1;
+
+	/* Reset the RX/TX counters. */
+	for (i = 0; i < SUME_NPORTS; i++) {
+		struct nf_priv *nf_priv = adapter->ifp[i]->if_softc;
+		struct sume_ifreq sifr;
+		sifr.addr = SUME_RESET_ADDR(i);
+		sifr.val = 1;
+		if (sume_module_reg_write(nf_priv, &sifr, 0x1f))
+			device_printf(dev, "Unable to reset module %d\n", i);
+
+	}
+
+#ifdef STATTIMER
+	callout_init(&adapter->timer, 1);
+	TASK_INIT(&adapter->stat_task, 0, sume_get_stats, adapter);
+
+	adapter->tq = taskqueue_create_fast("sume_stats", M_NOWAIT,
+	    taskqueue_thread_enqueue, &adapter->tq);
+	taskqueue_start_threads(&adapter->tq, 1, PI_NET, "%s stattaskq",
+	    device_get_nameunit(adapter->dev));
+
+	callout_reset(&adapter->timer, 1 * hz, sume_local_timer, adapter);
+#endif
 
 	return (0);
 
@@ -1506,6 +1679,16 @@ sume_detach(device_t dev)
 		if (nf_priv != NULL)
 			free(nf_priv, M_SUME);
 	}
+
+#ifdef STATTIMER
+	/* Drain the stats callout and task queue. */
+	callout_drain(&adapter->timer);
+
+	if (adapter->tq) {
+		taskqueue_drain(adapter->tq, &adapter->stat_task);
+		taskqueue_free(adapter->tq);
+	}
+#endif
 
 	sume_remove_riffa_buffers(adapter);
 

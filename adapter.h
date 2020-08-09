@@ -113,8 +113,21 @@
 
 #define	SUME_MIN_PKT_SIZE		(ETHER_MIN_LEN - ETHER_CRC_LEN)
 
-#define	SUME_NF_LINK_STATUS_ADDR(port)	(0x44040048 + port * 0x10000)
-#define	SUME_NF_LINK_STATUS(val)	((val >> 12) & 0x1)
+/* Module register data (packet counters, link status...) */
+#define	SUME_MOD0_REG_BASE		0x44040000
+#define	SUME_MOD_REG(port)		(SUME_MOD0_REG_BASE + 0x10000 * port)
+
+#define	SUME_RESET_OFFSET		0x8
+#define	SUME_PKTIN_OFFSET		0x18
+#define	SUME_PKTOUT_OFFSET		0x1c
+#define	SUME_STATUS_OFFSET		0x48
+
+#define	SUME_RESET_ADDR(p)		(SUME_MOD_REG(p) + SUME_RESET_OFFSET)
+#define	SUME_STAT_RX_ADDR(p)		(SUME_MOD_REG(p) + SUME_PKTIN_OFFSET)
+#define	SUME_STAT_TX_ADDR(p)		(SUME_MOD_REG(p) + SUME_PKTOUT_OFFSET)
+#define	SUME_STATUS_ADDR(p)		(SUME_MOD_REG(p) + SUME_STATUS_OFFSET)
+
+#define	SUME_LINK_STATUS(val)		((val >> 12) & 0x1)
 
 struct irq {
 	struct resource		*res;
@@ -129,6 +142,8 @@ struct nf_stats {
 	uint64_t		tx_packets;
 	uint64_t		tx_dropped;
 	uint64_t		tx_bytes;
+	uint64_t		hw_rx_packets;
+	uint64_t		hw_tx_packets;
 };
 
 struct riffa_chnl_dir {
@@ -186,6 +201,12 @@ struct sume_adapter {
 	uint64_t		packets_err;
 	uint64_t		bytes_err;
 	uint32_t		sume_debug;
+
+#ifdef STATTIMER
+	struct callout		timer;
+	struct task		stat_task;
+	struct taskqueue	*tq;
+#endif
 };
 
 /* SUME metadata:
