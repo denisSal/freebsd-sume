@@ -202,11 +202,9 @@ struct sume_adapter {
 	uint64_t		bytes_err;
 	uint32_t		sume_debug;
 
-#ifdef STATTIMER
 	struct callout		timer;
 	struct task		stat_task;
 	struct taskqueue	*tq;
-#endif
 };
 
 /* SUME metadata:

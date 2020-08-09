@@ -35,8 +35,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#define	STATTIMER
-
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/endian.h>
@@ -47,9 +45,7 @@
 #include <sys/socket.h>
 #include <sys/sockio.h>
 #include <sys/sysctl.h>
-#ifdef STATTIMER
 #include <sys/taskqueue.h>
-#endif
 
 #include <net/if.h>
 #include <net/if_media.h>
@@ -1349,7 +1345,6 @@ get_reg_value(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	return(0);
 }
 
-#ifdef STATTIMER
 static void
 sysctl_get_rx_counter(struct ifnet *ifp)
 {
@@ -1369,29 +1364,7 @@ sysctl_get_rx_counter(struct ifnet *ifp)
 
 	nf_priv->stats.hw_rx_packets += sifr.val;
 }
-#else
-static int
-sysctl_get_rx_counter(SYSCTL_HANDLER_ARGS)
-{
-	struct nf_priv *nf_priv = (struct nf_priv *) arg1;
-	struct sume_ifreq sifr;
-	int error;
-	uint64_t reg;
 
-	sifr.addr = SUME_STAT_RX_ADDR(nf_priv->port);
-	sifr.val = 0;
-
-	error = get_reg_value(nf_priv, &sifr);
-	if (error)
-		return (error);
-
-	reg = nf_priv->stats.hw_rx_packets += sifr.val;
-
-	return(sysctl_handle_64(oidp, &reg, 0, req));
-}
-#endif
-
-#ifdef STATTIMER
 static void
 sysctl_get_tx_counter(struct ifnet *ifp)
 {
@@ -1411,27 +1384,7 @@ sysctl_get_tx_counter(struct ifnet *ifp)
 
 	nf_priv->stats.hw_tx_packets += sifr.val;
 }
-#else
-static int
-sysctl_get_tx_counter(SYSCTL_HANDLER_ARGS)
-{
-	struct nf_priv *nf_priv = (struct nf_priv *) arg1;
-	struct sume_ifreq sifr;
-	int error;
-	uint64_t reg;
 
-	sifr.addr = SUME_STAT_TX_ADDR(nf_priv->port);
-	sifr.val = 0;
-
-	error = get_reg_value(nf_priv, &sifr);
-	if (error)
-		return (error);
-
-	reg = nf_priv->stats.hw_tx_packets += sifr.val;
-
-	return(sysctl_handle_64(oidp, &reg, 0, req));
-}
-#endif
 static void
 sume_sysctl_init(struct sume_adapter *adapter)
 {
@@ -1475,7 +1428,6 @@ sume_sysctl_init(struct sume_adapter *adapter)
 			return;
 		}
 
-#ifdef STATTIMER
 		/* HW RX stats */
 		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
 		    "hw_rx_packets", CTLFLAG_RD, &nf_priv->stats.hw_rx_packets,
@@ -1485,17 +1437,6 @@ sume_sysctl_init(struct sume_adapter *adapter)
 		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
 		    "hw_tx_packets", CTLFLAG_RD, &nf_priv->stats.hw_tx_packets,
 		    0, "hw_tx packets");
-#else
-		/* HW RX stats */
-		SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
-		    "hw_rx_packets", CTLTYPE_U64 | CTLFLAG_RD, nf_priv, 0,
-		    sysctl_get_rx_counter, "LU", "hw_rx_packets");
-
-		/* HW TX stats */
-		SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
-		    "hw_tx_packets", CTLTYPE_U64 | CTLFLAG_RD, nf_priv, 0,
-		    sysctl_get_tx_counter, "LU", "hw_tx_packets");
-#endif
 
 		/* RX stats */
 		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
@@ -1521,7 +1462,6 @@ sume_sysctl_init(struct sume_adapter *adapter)
 	}
 }
 
-#ifdef STATTIMER
 static void
 sume_local_timer(void *arg)
 {
@@ -1543,7 +1483,6 @@ sume_get_stats(void *context, int pending)
 		sysctl_get_tx_counter(ifp);
 	}
 }
-#endif
 
 static int
 sume_attach(device_t dev)
@@ -1592,7 +1531,6 @@ sume_attach(device_t dev)
 
 	}
 
-#ifdef STATTIMER
 	callout_init(&adapter->timer, 1);
 	TASK_INIT(&adapter->stat_task, 0, sume_get_stats, adapter);
 
@@ -1602,7 +1540,6 @@ sume_attach(device_t dev)
 	    device_get_nameunit(adapter->dev));
 
 	callout_reset(&adapter->timer, 1 * hz, sume_local_timer, adapter);
-#endif
 
 	return (0);
 
@@ -1680,7 +1617,6 @@ sume_detach(device_t dev)
 			free(nf_priv, M_SUME);
 	}
 
-#ifdef STATTIMER
 	/* Drain the stats callout and task queue. */
 	callout_drain(&adapter->timer);
 
@@ -1688,7 +1624,6 @@ sume_detach(device_t dev)
 		taskqueue_drain(adapter->tq, &adapter->stat_task);
 		taskqueue_free(adapter->tq);
 	}
-#endif
 
 	sume_remove_riffa_buffers(adapter);
 
