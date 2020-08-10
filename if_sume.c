@@ -1096,9 +1096,6 @@ sume_if_start_locked(struct ifnet *ifp)
 	/* Update the state before intiating the DMA to avoid races. */
 	send->state = SUME_RIFFA_CHAN_STATE_READY;
 
-	bus_dmamap_sync(send->my_tag, send->my_map,
-	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
-
 	/* DMA. */
 	write_reg(adapter, RIFFA_CHNL_REG(SUME_RIFFA_CHANNEL_DATA,
 	    RIFFA_RX_SG_ADDR_LO_REG_OFF),
