@@ -1120,6 +1120,9 @@ sume_if_start_locked(struct ifnet *ifp)
 
 	adapter->last_ifc = nf_priv->port;
 
+	/* Reset watchdog counter. */
+	adapter->wd_counter = 0;
+
 	return (0);
 }
 
@@ -1417,6 +1420,29 @@ sume_local_timer(void *arg)
 	struct sume_adapter *adapter = arg;
 
 	taskqueue_enqueue(adapter->tq, &adapter->stat_task);
+
+	SUME_LOCK(adapter);
+	if (adapter->send[SUME_RIFFA_CHANNEL_DATA]->state ==
+	    SUME_RIFFA_CHAN_STATE_READ) {
+		if (++adapter->wd_counter >= 3) {
+			int i;
+			/* Resetting interfaces if stuck for 3 seconds. */
+			device_printf(adapter->dev, "TX stuck, resetting "
+			    "adapter.\n");
+			read_reg(adapter, RIFFA_INFO_REG_OFF);
+
+			for (i = 0; i < SUME_NPORTS; i++) {
+				struct ifnet *ifp = adapter->ifp[i];
+				if (ifp->if_flags & IFF_UP)
+					IFQ_PURGE(&ifp->if_snd);
+			}
+			adapter->send[SUME_RIFFA_CHANNEL_DATA]->state =
+			    SUME_RIFFA_CHAN_STATE_IDLE;
+			adapter->wd_counter = 0;
+		}
+	}
+	SUME_UNLOCK(adapter);
+
 	callout_reset(&adapter->timer, 1 * hz, sume_local_timer, adapter);
 }
 

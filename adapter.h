@@ -203,6 +203,8 @@ struct sume_adapter {
 	struct callout		timer;
 	struct task		stat_task;
 	struct taskqueue	*tq;
+
+	uint32_t		wd_counter;
 };
 
 /* SUME metadata:
