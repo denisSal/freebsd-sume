@@ -1319,7 +1319,7 @@ sume_probe_riffa_buffers(struct sume_adapter *adapter)
 }
 
 static int
-get_reg_value(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
+get_modreg_value(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 {
 	int error;
 
@@ -1332,40 +1332,6 @@ get_reg_value(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 		return (error);
 
 	return(0);
-}
-
-static void
-sysctl_get_rx_counter(struct ifnet *ifp)
-{
-	struct nf_priv *nf_priv;
-	struct sume_ifreq sifr;
-
-	nf_priv = ifp->if_softc;
-
-	sifr.addr = SUME_STAT_RX_ADDR(nf_priv->port);
-	sifr.val = 0;
-
-	if (get_reg_value(nf_priv, &sifr))
-		return;
-
-	nf_priv->stats.hw_rx_packets += sifr.val;
-}
-
-static void
-sysctl_get_tx_counter(struct ifnet *ifp)
-{
-	struct nf_priv *nf_priv;
-	struct sume_ifreq sifr;
-
-	nf_priv = ifp->if_softc;
-
-	sifr.addr = SUME_STAT_TX_ADDR(nf_priv->port);
-	sifr.val = 0;
-
-	if (get_reg_value(nf_priv, &sifr))
-		return;
-
-	nf_priv->stats.hw_tx_packets += sifr.val;
 }
 
 static void
@@ -1463,8 +1429,22 @@ sume_get_stats(void *context, int pending)
 	for (i = 0; i < SUME_NPORTS; i++) {
 		struct ifnet *ifp = adapter->ifp[i];
 		if (ifp->if_flags & IFF_UP) {
-			sysctl_get_rx_counter(ifp);
-			sysctl_get_tx_counter(ifp);
+			struct nf_priv *nf_priv = ifp->if_softc;
+			struct sume_ifreq sifr;
+
+			/* Get RX counter. */
+			sifr.addr = SUME_STAT_RX_ADDR(nf_priv->port);
+			sifr.val = 0;
+
+			if (!get_modreg_value(nf_priv, &sifr))
+				nf_priv->stats.hw_rx_packets += sifr.val;
+
+			/* Get TX counter. */
+			sifr.addr = SUME_STAT_TX_ADDR(nf_priv->port);
+			sifr.val = 0;
+
+			if (!get_modreg_value(nf_priv, &sifr))
+				nf_priv->stats.hw_tx_packets += sifr.val;
 		}
 	}
 }
