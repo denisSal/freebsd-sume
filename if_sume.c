@@ -1337,9 +1337,6 @@ sysctl_get_rx_counter(struct ifnet *ifp)
 	struct nf_priv *nf_priv;
 	struct sume_ifreq sifr;
 
-	if (!(ifp->if_flags & IFF_UP))
-		return;
-
 	nf_priv = ifp->if_softc;
 
 	sifr.addr = SUME_STAT_RX_ADDR(nf_priv->port);
@@ -1356,9 +1353,6 @@ sysctl_get_tx_counter(struct ifnet *ifp)
 {
 	struct nf_priv *nf_priv;
 	struct sume_ifreq sifr;
-
-	if (!(ifp->if_flags & IFF_UP))
-		return;
 
 	nf_priv = ifp->if_softc;
 
@@ -1465,8 +1459,10 @@ sume_get_stats(void *context, int pending)
 
 	for (i = 0; i < SUME_NPORTS; i++) {
 		struct ifnet *ifp = adapter->ifp[i];
-		sysctl_get_rx_counter(ifp);
-		sysctl_get_tx_counter(ifp);
+		if (ifp->if_flags & IFF_UP) {
+			sysctl_get_rx_counter(ifp);
+			sysctl_get_tx_counter(ifp);
+		}
 	}
 }
 
