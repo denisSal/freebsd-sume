@@ -1430,7 +1430,7 @@ sume_local_timer(void *arg)
 
 			for (i = 0; i < SUME_NPORTS; i++) {
 				struct ifnet *ifp = adapter->ifp[i];
-				if (ifp->if_flags & IFF_UP)
+				if (ifp != NULL && ifp->if_flags & IFF_UP)
 					IFQ_PURGE(&ifp->if_snd);
 			}
 			adapter->send[SUME_RIFFA_CHANNEL_DATA]->state =
@@ -1451,7 +1451,7 @@ sume_get_stats(void *context, int pending)
 
 	for (i = 0; i < SUME_NPORTS; i++) {
 		struct ifnet *ifp = adapter->ifp[i];
-		if (ifp->if_flags & IFF_UP) {
+		if (ifp != NULL && ifp->if_flags & IFF_UP) {
 			struct nf_priv *nf_priv = ifp->if_softc;
 			struct sume_ifreq sifr;
 
