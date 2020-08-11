@@ -1419,8 +1419,8 @@ sume_local_timer(void *arg)
 	taskqueue_enqueue(adapter->tq, &adapter->stat_task);
 
 	SUME_LOCK(adapter);
-	if (adapter->send[SUME_RIFFA_CHANNEL_DATA]->state ==
-	    SUME_RIFFA_CHAN_STATE_READ) {
+	if (adapter->send[SUME_RIFFA_CHANNEL_DATA]->state !=
+	    SUME_RIFFA_CHAN_STATE_IDLE) {
 		if (++adapter->wd_counter >= 3) {
 			int i;
 			/* Resetting interfaces if stuck for 3 seconds. */
