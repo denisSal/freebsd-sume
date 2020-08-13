@@ -261,8 +261,6 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
 	/* If the interface is down, well, we are done. */
 	nf_priv = ifp->if_softc;
 	if (!(ifp->if_flags & IFF_UP)) {
-		if (adapter->sume_debug)
-			device_printf(dev, "Device nf%d not up.\n", np);
 		nf_priv->stats.ifc_down_packets++;
 		nf_priv->stats.ifc_down_bytes += plen;
 		return (NULL);
