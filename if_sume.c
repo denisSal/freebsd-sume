@@ -156,7 +156,7 @@ static driver_t sume_driver = {
 MALLOC_DECLARE(M_SUME);
 MALLOC_DEFINE(M_SUME, "sume", "NetFPGA SUME device driver");
 
-static void check_queues(struct sume_adapter *);
+static void check_tx_queues(struct sume_adapter *);
 static void sume_fill_bb_desc(struct sume_adapter *, struct riffa_chnl_dir *,
     uint64_t);
 
@@ -390,7 +390,7 @@ sume_intr_handler(void *arg)
 				if (i == SUME_RIFFA_CHANNEL_DATA) {
 					send->state =
 					    SUME_RIFFA_CHAN_STATE_IDLE;
-					check_queues(adapter);
+					check_tx_queues(adapter);
 				} else if (i == SUME_RIFFA_CHANNEL_REG)
 					wakeup(&send->event);
 				else {
@@ -1147,7 +1147,7 @@ sume_if_start(struct ifnet *ifp)
 }
 
 static void
-check_queues(struct sume_adapter *adapter)
+check_tx_queues(struct sume_adapter *adapter)
 {
 	int i, last_ifc;
 
@@ -1622,8 +1622,6 @@ sume_detach(device_t dev)
 static int
 mod_event(module_t mod, int cmd, void *arg)
 {
-	int rc = 0;
-
 	switch (cmd) {
 	case MOD_LOAD:
 		unr = new_unrhdr(0, INT_MAX, NULL);
@@ -1634,7 +1632,7 @@ mod_event(module_t mod, int cmd, void *arg)
 		break;
 	}
 
-	return (rc);
+	return (0);
 }
 static devclass_t sume_devclass;
 
