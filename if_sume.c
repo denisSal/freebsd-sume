@@ -903,7 +903,7 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 		return (ENODEV);
 
 	nf_priv = ifp->if_softc;
-	if (nf_priv == NULL || nf_priv->adapter == NULL)
+	if (nf_priv->adapter == NULL)
 		return (EINVAL);
 
 	adapter = nf_priv->adapter;
@@ -1570,6 +1570,14 @@ sume_detach(device_t dev)
 	    "initialized"));
 	adapter->running = 0;
 
+	/* Drain the stats callout and task queue. */
+	callout_drain(&adapter->timer);
+
+	if (adapter->tq) {
+		taskqueue_drain(adapter->tq, &adapter->stat_task);
+		taskqueue_free(adapter->tq);
+	}
+
 	for (i = 0; i < SUME_NPORTS; i++) {
 		struct ifnet *ifp = adapter->ifp[i];
 		if (ifp == NULL)
@@ -1577,27 +1585,17 @@ sume_detach(device_t dev)
 
 		ifp->if_drv_flags &= ~IFF_DRV_RUNNING;
 		nf_priv = ifp->if_softc;
-		if (nf_priv != NULL) {
-			if (ifp->if_flags & IFF_UP)
-				if_down(ifp);
-			ifmedia_removeall(&nf_priv->media);
-			free_unr(unr, nf_priv->unit);
-		}
+
+		if (ifp->if_flags & IFF_UP)
+			if_down(ifp);
+		ifmedia_removeall(&nf_priv->media);
+		free_unr(unr, nf_priv->unit);
 
 		ifp->if_flags &= ~IFF_UP;
 		ether_ifdetach(ifp);
 		if_free(ifp);
 
-		if (nf_priv != NULL)
-			free(nf_priv, M_SUME);
-	}
-
-	/* Drain the stats callout and task queue. */
-	callout_drain(&adapter->timer);
-
-	if (adapter->tq) {
-		taskqueue_drain(adapter->tq, &adapter->stat_task);
-		taskqueue_free(adapter->tq);
+		free(nf_priv, M_SUME);
 	}
 
 	sume_remove_riffa_buffers(adapter);
