@@ -1130,19 +1130,14 @@ sume_if_start(struct ifnet *ifp)
 	KASSERT(nf_priv->riffa_channel == SUME_RIFFA_CHANNEL_DATA,
 	    ("TX on non-data channel"));
 
-	if (!adapter->running)
-		return;
-	if (!(ifp->if_flags & IFF_UP))
+	if (!adapter->running && !(ifp->if_flags & IFF_UP))
 		return;
 
 	SUME_LOCK(adapter);
-	if (adapter->send[SUME_RIFFA_CHANNEL_DATA]->state !=
+	if (adapter->send[SUME_RIFFA_CHANNEL_DATA]->state ==
 	    SUME_RIFFA_CHAN_STATE_IDLE) {
-		SUME_UNLOCK(adapter);
-		return;
+		sume_if_start_locked(ifp);
 	}
-
-	sume_if_start_locked(ifp);
 	SUME_UNLOCK(adapter);
 }
 
