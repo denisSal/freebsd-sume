@@ -219,7 +219,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
 	struct mbuf *m;
 	struct ifnet *ifp = NULL;
 	int np;
-	uint16_t sport, dport, plen, magic;
+	uint16_t dport, plen, magic;
 	device_t dev = adapter->dev;
 	uint8_t *indata = (uint8_t *)
 	    adapter->recv[SUME_RIFFA_CHANNEL_DATA]->buf_addr +
@@ -235,7 +235,6 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
 		return (NULL);
 	}
 
-	sport = le16toh(mdata->sport);
 	dport = le16toh(mdata->dport);
 	plen = le16toh(mdata->plen);
 	magic = le16toh(mdata->magic);
@@ -447,20 +446,19 @@ sume_intr_handler(void *arg)
 				    RIFFA_TX_LEN_REG_OFF));
 
 				/* Boundary checks. */
-				max_ptr = (uint32_t) ((char *) recv->buf_addr +
-				    SUME_RIFFA_OFFSET(recv->offlast) +
-				    SUME_RIFFA_LEN(recv->len) - 1);
-				if (max_ptr < (uint32_t) recv->buf_addr) {
+				max_ptr = (uint32_t)((uintptr_t)recv->buf_addr
+				    + SUME_RIFFA_OFFSET(recv->offlast)
+				    + SUME_RIFFA_LEN(recv->len) - 1);
+				if (max_ptr <
+				    (uint32_t)((uintptr_t)recv->buf_addr))
 					device_printf(dev, "%s: receive buffer"
 					    " wrap-around overflow.\n",
 					    __func__);
-				}
 				if ((SUME_RIFFA_OFFSET(recv->offlast) +
 				    SUME_RIFFA_LEN(recv->len)) >
-				    adapter->sg_buf_size) {
+				    adapter->sg_buf_size)
 					device_printf(dev, "%s: receive buffer"
 					    " too small.\n", __func__);
-				}
 
 				/* Fill the bouncebuf "descriptor". */
 				sume_fill_bb_desc(adapter, recv,
