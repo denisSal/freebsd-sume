@@ -1417,24 +1417,17 @@ sume_local_timer(void *arg)
 	taskqueue_enqueue(adapter->tq, &adapter->stat_task);
 
 	SUME_LOCK(adapter);
-	if (adapter->send[SUME_RIFFA_CHANNEL_DATA]->state !=
-	    SUME_RIFFA_CHAN_STATE_IDLE) {
-		if (++adapter->wd_counter >= 3) {
-			int i;
-			/* Resetting interfaces if stuck for 3 seconds. */
-			device_printf(adapter->dev, "TX stuck, resetting "
-			    "adapter.\n");
-			read_reg(adapter, RIFFA_INFO_REG_OFF);
+	if ((adapter->send[SUME_RIFFA_CHANNEL_DATA]->state !=
+	    SUME_RIFFA_CHAN_STATE_IDLE) && (++adapter->wd_counter >= 3)) {
+		/* Resetting interfaces if stuck for 3 seconds. */
+		device_printf(adapter->dev, "TX stuck, resetting adapter.\n");
+		read_reg(adapter, RIFFA_INFO_REG_OFF);
 
-			for (i = 0; i < SUME_NPORTS; i++) {
-				struct ifnet *ifp = adapter->ifp[i];
-				if (ifp != NULL && ifp->if_flags & IFF_UP)
-					IFQ_PURGE(&ifp->if_snd);
-			}
-			adapter->send[SUME_RIFFA_CHANNEL_DATA]->state =
-			    SUME_RIFFA_CHAN_STATE_IDLE;
-			adapter->wd_counter = 0;
-		}
+		adapter->send[SUME_RIFFA_CHANNEL_DATA]->state =
+		    SUME_RIFFA_CHAN_STATE_IDLE;
+		adapter->wd_counter = 0;
+
+		check_tx_queues(adapter);
 	}
 	SUME_UNLOCK(adapter);
 
