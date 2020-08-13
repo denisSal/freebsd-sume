@@ -642,8 +642,8 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 	    PCIEM_LINK_CTL_RCB), 2);
 
 	reg = read_reg(adapter, RIFFA_INFO_REG_OFF);
-	adapter->num_sg =	RIFFA_SG_ELEMS * ((reg >> 19) & 0xf);
-	adapter->sg_buf_size =	RIFFA_SG_BUF_SIZE * ((reg >> 19) & 0xf);
+	adapter->num_sg = RIFFA_SG_ELEMS * ((reg >> 19) & 0xf);
+	adapter->sg_buf_size = RIFFA_SG_BUF_SIZE * ((reg >> 19) & 0xf);
 
 	error = ENODEV;
 	/* Check bus master is enabled. */
@@ -842,8 +842,8 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	/*
 	 * 0. Sleep waiting for result if needed (unless condition is
 	 *    true already).
-	 * 2. Read DMA results.
-	 * 3. Update state on *TX* to IDLE to allow next read to start.
+	 * 1. Read DMA results.
+	 * 2. Update state on *TX* to IDLE to allow next read to start.
 	 */
 	SUME_LOCK(adapter);
 
@@ -873,7 +873,7 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	 * machine does prevent the data from changing.
 	 */
 	data = (struct nf_regop_data *) (recv->buf_addr +
-		sizeof(struct nf_bb_desc));
+	    sizeof(struct nf_bb_desc));
 
 	if (le32toh(data->rtag) != send->rtag)
 		device_printf(adapter->dev, "%s: rtag error: 0x%08x 0x%08x\n",
@@ -1135,9 +1135,8 @@ sume_if_start(struct ifnet *ifp)
 
 	SUME_LOCK(adapter);
 	if (adapter->send[SUME_RIFFA_CHANNEL_DATA]->state ==
-	    SUME_RIFFA_CHAN_STATE_IDLE) {
+	    SUME_RIFFA_CHAN_STATE_IDLE)
 		sume_if_start_locked(ifp);
-	}
 	SUME_UNLOCK(adapter);
 }
 
@@ -1321,10 +1320,8 @@ get_modreg_value(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 		return (error);
 
 	error = sume_module_reg_read(nf_priv, sifr);
-	if (error)
-		return (error);
 
-	return(0);
+	return (error);
 }
 
 static void
