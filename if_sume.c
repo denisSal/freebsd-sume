@@ -707,8 +707,6 @@ sume_fill_bb_desc(struct sume_adapter *adapter, struct riffa_chnl_dir *p,
 	bouncebuf->lower = (p->buf_hw_addr + sizeof(struct nf_bb_desc));
 	bouncebuf->upper = (p->buf_hw_addr + sizeof(struct nf_bb_desc)) >> 32;
 	bouncebuf->len = len >> 2;
-
-	p->num_sg = 1;
 }
 
 /* Register read/write. */
@@ -1216,6 +1214,8 @@ callback_dma(void *arg, bus_dma_segment_t *segs, int nseg, int err)
 		return;
 	}
 
+	KASSERT(nseg == 1, ("%s: %d segments returned!", __func__, nseg));
+
 	*(bus_addr_t *) arg = segs[0].ds_addr;
 }
 
@@ -1288,6 +1288,7 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 			return (err);
 		}
 		rp[i]->buf_hw_addr = hw_addr;
+		rp[i]->num_sg = 1;
 
 		rp[i]->rtag = -3;
 		rp[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
