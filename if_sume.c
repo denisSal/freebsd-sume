@@ -1215,8 +1215,8 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 	device_t dev = adapter->dev;
 
 	error = ENOMEM;
-	*p = (struct riffa_chnl_dir **) malloc(SUME_RIFFA_CHANNELS *
-	    sizeof(struct riffa_chnl_dir *), M_SUME, M_ZERO | M_WAITOK);
+	*p = malloc(SUME_RIFFA_CHANNELS * sizeof(struct riffa_chnl_dir *),
+	    M_SUME, M_ZERO | M_WAITOK);
 	if (*p == NULL) {
 		device_printf(dev, "%s: malloc(%s) failed.\n", __func__, dir);
 		return (error);
@@ -1226,8 +1226,7 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 	/* Allocate the chnl_dir structs themselves. */
 	for (i = 0; i < SUME_RIFFA_CHANNELS; i++) {
 		/* One direction. */
-		rp[i] = (struct riffa_chnl_dir *)
-		    malloc(sizeof(struct riffa_chnl_dir), M_SUME,
+		rp[i] = malloc(sizeof(struct riffa_chnl_dir), M_SUME,
 		    M_ZERO | M_WAITOK);
 		if (rp[i] == NULL) {
 			device_printf(dev, "%s: malloc(%s[%d]) riffa_chnl_dir "
