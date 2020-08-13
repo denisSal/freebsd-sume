@@ -39,6 +39,15 @@ For me, the pre-built bitstream from Cambridge was not working correctly - at
 higher RX packet rates, the newly incoming packets would overwrite the ones in
 some internal FIFO so the packets would come out of the board scrambled until
 physical reset of the board.
+
+There is also a strange behaviour in the TX path: when sending "small" packets,
+TX works as it should, but when sending packets above some size limit (above
+1072 bytes on my computer) right after loading the driver, SUME doesn't send
+the TX_DONE interrupt and refuses to send packets until the driver is reloaded
+/ board is reset. This would mean that the driver would get stuck in a non-IDLE
+TX state but a watchdog-like function is implemented in the driver to check
+whether the non-IDLE state lasts more then 3 seconds and it resets the board
+automatically. For more details, visit the NetFPGA SUME project site.
 .Sh SEE ALSO
 .Xr arp 4 ,
 .Xr ifconfig 8 ,
