@@ -889,22 +889,10 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 static int
 sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 {
-	struct nf_priv *nf_priv;
 	struct ifreq *ifr = (struct ifreq *) data;
+	struct nf_priv *nf_priv = ifp->if_softc;
 	struct sume_ifreq sifr;
 	int error = 0;
-	struct sume_adapter *adapter;
-
-	if (ifp == NULL)
-		return (ENODEV);
-
-	nf_priv = ifp->if_softc;
-	if (nf_priv->adapter == NULL)
-		return (EINVAL);
-
-	adapter = nf_priv->adapter;
-	if (adapter->running == 0)
-		return (ENODEV);
 
 	switch (cmd) {
 	case SIOCGIFMEDIA:
