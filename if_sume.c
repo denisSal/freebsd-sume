@@ -263,8 +263,8 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
 	if (!(ifp->if_flags & IFF_UP)) {
 		if (adapter->sume_debug)
 			device_printf(dev, "Device nf%d not up.\n", np);
-		adapter->packets_err++;
-		adapter->bytes_err += plen;
+		nf_priv->stats.ifc_down_packets++;
+		nf_priv->stats.ifc_down_bytes += plen;
 		return (NULL);
 	}
 
@@ -1367,6 +1367,14 @@ sume_sysctl_init(struct sume_adapter *adapter)
 			device_printf(dev, "SYSCTL_ADD_NODE failed.\n");
 			return;
 		}
+
+		/* Packets dropped by down interface. */
+		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
+		    "ifc_down_bytes", CTLFLAG_RD,
+		    &nf_priv->stats.ifc_down_bytes, 0, "ifc_down bytes");
+		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,
+		    "ifc_down_packets", CTLFLAG_RD,
+		    &nf_priv->stats.ifc_down_packets, 0, "ifc_down packets");
 
 		/* HW RX stats */
 		SYSCTL_ADD_U64(ctx, SYSCTL_CHILDREN(tmp_tree), OID_AUTO,

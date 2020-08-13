@@ -144,6 +144,8 @@ struct nf_stats {
 	uint64_t		tx_bytes;
 	uint64_t		hw_rx_packets;
 	uint64_t		hw_tx_packets;
+	uint64_t		ifc_down_packets;
+	uint64_t		ifc_down_bytes;
 };
 
 struct riffa_chnl_dir {
