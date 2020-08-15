@@ -1147,9 +1147,6 @@ check_tx_queues(struct sume_adapter *adapter)
 
 	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
 
-	if (!adapter->running)
-		return;
-
 	last_ifc = adapter->last_ifc;
 
 	/* Check all interfaces */
@@ -1401,6 +1398,9 @@ static void
 sume_local_timer(void *arg)
 {
 	struct sume_adapter *adapter = arg;
+
+	if (!adapter->running)
+		return;
 
 	taskqueue_enqueue(adapter->tq, &adapter->stat_task);
 
