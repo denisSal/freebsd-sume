@@ -89,6 +89,8 @@
 
 /* Various bits and pieces. */
 #define	SUME_RIFFA_MAGIC		0xcafe
+#define	SUME_MR_WRITE			0x1f
+#define	SUME_MR_READ			0x00
 
 /* Accessor macros. */
 #define	SUME_OFFLAST			((0 << 1) | (1 & 0x01))
@@ -235,13 +237,13 @@ struct nf_metadata {
  * addr - address of the SUME module register to read/write
  * val - value to write/read to/from the register
  * rtag - returned on read: transaction tag, for syncronization
- * strb - 0x1f when writing, 0x00 for reading
+ * optype - 0x1f when writing, 0x00 for reading
  */
 struct nf_regop_data {
 	uint32_t		addr;
 	uint32_t		val;
 	uint32_t		rtag;
-	uint32_t		strb;
+	uint32_t		optype;
 };
 
 /* Our bouncebuffer "descriptor". This holds our physical address (lower and

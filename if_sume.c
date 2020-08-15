@@ -96,9 +96,8 @@ static driver_t sume_driver = {
  * (1) SUME received a packet on one of the interfaces.
  * (2) SUME generates an interrupt vector, bit 00001 is set (channel 0 - new RX
  *     transaction).
- * (3) We read the length of the incoming packet and the offset (is offset even
- *     used for anything except checking boundaries?) along with the 'last' flag
- *     from the SUME registers.
+ * (3) We read the length of the incoming packet and the offset along with the
+ *     'last' flag from the SUME registers.
  * (4) We prepare for the DMA transaction by setting the bouncebuffer on the
  *     address buf_addr. For now, this is how it's done:
  *     - First 3*sizeof(uint32_t) bytes are: lower and upper 32 bits of physical
@@ -116,15 +115,16 @@ static driver_t sume_driver = {
  *     bouncebuffer received).
  * (7) SUME generates an interrupt vector, bit 00100 is set (channel 0 -
  *     transaction is done).
+ * (8) SUME can do both steps (6) and (7) using the same interrupt.
  * (8) We read the first 16 bytes (metadata) of the received data and note the
  *     incoming interface so we can later forward it to the right one in the OS
- *     (nf0, nf1, nf2 or nf3).
- * (9) We create an mbuf and copy the data from the bouncebuffer to the mbuf and
+ *     (sume0, sume1, sume2 or sume3).
+ * (10) We create an mbuf and copy the data from the bouncebuffer to the mbuf and
  *     set the mbuf rcvif to the incoming interface.
- * (10) We forward the mbuf to the appropriate interface via ifp->if_input.
+ * (11) We forward the mbuf to the appropriate interface via ifp->if_input.
  *
  * When sending packets to SUME (TX):
- * (1) The OS calls sume_start_xmit() function on TX.
+ * (1) The OS calls sume_if_start() function on TX.
  * (2) We get the mbuf packet data and copy it to the
  *     buf_addr+3*sizeof(uint32_t) + metadata 16 bytes.
  * (3) We create the metadata based on the output interface and copy it to the
@@ -140,6 +140,7 @@ static driver_t sume_driver = {
  *     bouncebuffer is read).
  * (8) SUME generates an interrupt vector, bit 10000 is set (channel 0 -
  *     transaction is done).
+ * (9) SUME can do both steps (7) and (8) using the same interrupt.
  *
  * Internal registers
  * Every module in the SUME hardware has its own set of internal registers
@@ -210,7 +211,8 @@ sume_probe(device_t dev)
  * received the packet (sport will be 1, 2, 4 or 8), the packet length (plen),
  * and the magic word needs to be 0xcafe. When we have the packet data, we
  * create an mbuf and copy the data to it using m_copyback() function, set the
- * correct interface to rcvif and send the packet to the OS with if_input.
+ * correct interface to rcvif and return the mbuf to be later sent to the OS
+ * with if_input.
  */
 static struct mbuf *
 sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
@@ -287,12 +289,11 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
 
 /*
  * SUME interrupt handler for when we get a valid interrupt from the board.
- * There are 2 interrupt vectors, we use vect0 when the number of channels is
- * lower then 7 and vect1 otherwise. Theoretically, we can receive interrupt
- * for any of the available channels, but RIFFA DMA uses only 2: 0 and 1, so we
- * use only vect0. The vector is a 32 bit number, using 5 bits for every
- * channel, the least significant bits correspond to channel 0 and the next 5
- * bits correspond to channel 1. Vector bits for RX/TX are:
+ * Theoretically, we can receive interrupt for any of the available channels,
+ * but RIFFA DMA uses only 2: 0 and 1, so we use only vect0. The vector is a 32
+ * bit number, using 5 bits for every channel, the least significant bits
+ * correspond to channel 0 and the next 5 bits correspond to channel 1. Vector
+ * bits for RX/TX are:
  * RX
  * bit 0 - new transaction from SUME
  * bit 1 - SUME received our bouncebuffer address
@@ -549,8 +550,7 @@ sume_intr_handler(void *arg)
 
 /*
  * Filtering interrupts. We wait for the adapter to go into the 'running' state
- * to start accepting them. Also, we ignore them if the first two bits of the
- * vector are set.
+ * to start accepting them.
  */
 static int
 sume_intr_filter(void *arg)
@@ -695,7 +695,7 @@ sume_if_init(void *sc)
 {
 }
 
-/* Helper functions. */
+/* Write the address and length for our incoming / outgoing transaction. */
 static void
 sume_fill_bb_desc(struct sume_adapter *adapter, struct riffa_chnl_dir *p,
     uint64_t len)
@@ -707,7 +707,7 @@ sume_fill_bb_desc(struct sume_adapter *adapter, struct riffa_chnl_dir *p,
 	bouncebuf->len = len >> 2;
 }
 
-/* Register read/write. */
+/* Module register locked write. */
 static int
 sume_modreg_write_locked(struct sume_adapter *adapter)
 {
@@ -743,14 +743,14 @@ sume_modreg_write_locked(struct sume_adapter *adapter)
 }
 
 /*
- * Request a register read or write (depending on strb).
- * If strb is set (0x1f) this will result in a register write,
+ * Request a register read or write (depending on optype).
+ * If optype is set (0x1f) this will result in a register write,
  * otherwise this will result in a register read request at the given
  * address and the result will need to be DMAed back.
  */
 static int
 sume_module_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
-    uint32_t strb)
+    uint32_t optype)
 {
 	struct sume_adapter *adapter;
 	struct nf_regop_data *data;
@@ -783,7 +783,7 @@ sume_module_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 	data->val = htole32(sifr->val);
 	/* Tag to indentify request. */
 	data->rtag = htole32(++send->rtag);
-	data->strb = htole32(strb);
+	data->optype = htole32(optype);
 	send->len = 4;	/* words */
 
 	error = sume_modreg_write_locked(adapter);
@@ -798,9 +798,9 @@ sume_module_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 		    "Waiting recv finish", 1 * hz);
 
 	/* This was a write so we are done; were interrupted, or timed out. */
-	if (strb != 0x00 || error != 0 || error == EWOULDBLOCK) {
+	if (optype != 0x00 || error != 0 || error == EWOULDBLOCK) {
 		send->state = SUME_RIFFA_CHAN_STATE_IDLE;
-		if (strb == 0x00)
+		if (optype == 0x00)
 			error = EWOULDBLOCK;
 		else
 			error = 0;
@@ -820,6 +820,7 @@ sume_module_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 	return (error);
 }
 
+/* Module register read. */
 static int
 sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 {
@@ -886,6 +887,21 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	return (0);
 }
 
+/* Read value from a module register and return it to a sume_ifreq. */
+static int
+get_modreg_value(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
+{
+	int error;
+
+	error = sume_module_reg_write(nf_priv, sifr, SUME_MR_READ);
+	if (error)
+		return (error);
+
+	error = sume_module_reg_read(nf_priv, sifr);
+
+	return (error);
+}
+
 static int
 sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 {
@@ -906,7 +922,7 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 			error = EINVAL;
 			break;
 		}
-		error = sume_module_reg_write(nf_priv, &sifr, 0x1f);
+		error = sume_module_reg_write(nf_priv, &sifr, SUME_MR_WRITE);
 		break;
 
 	case SUME_IOCTL_CMD_READ_REG:
@@ -916,11 +932,7 @@ sume_if_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 			break;
 		}
 
-		error = sume_module_reg_write(nf_priv, &sifr, 0x00);
-		if (error)
-			break;
-
-		error = sume_module_reg_read(nf_priv, &sifr);
+		error = get_modreg_value(nf_priv, &sifr);
 		if (error)
 			break;
 
@@ -1124,6 +1136,10 @@ sume_if_start(struct ifnet *ifp)
 	SUME_UNLOCK(adapter);
 }
 
+/*
+ * We call this function at the end of every TX transaction to check for
+ * remaining packets in the TX queues for every UP interface.
+ */
 static void
 check_tx_queues(struct sume_adapter *adapter)
 {
@@ -1239,9 +1255,9 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 		    BUS_SPACE_MAXADDR,
 		    BUS_SPACE_MAXADDR,
 		    NULL, NULL,
-		    adapter->sg_buf_size, // CHECK
+		    adapter->sg_buf_size,
 		    1,
-		    adapter->sg_buf_size, // CHECK
+		    adapter->sg_buf_size,
 		    0,
 		    NULL,
 		    NULL,
@@ -1292,20 +1308,6 @@ sume_probe_riffa_buffers(struct sume_adapter *adapter)
 		return (error);
 
 	error = sume_probe_riffa_buffer(adapter, &adapter->send, "send");
-
-	return (error);
-}
-
-static int
-get_modreg_value(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
-{
-	int error;
-
-	error = sume_module_reg_write(nf_priv, sifr, 0x00);
-	if (error)
-		return (error);
-
-	error = sume_module_reg_read(nf_priv, sifr);
 
 	return (error);
 }
