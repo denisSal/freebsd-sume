@@ -1003,8 +1003,6 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 	link_status = SUME_LINK_STATUS(sifr.val);
 	if (link_status)
 		ifmr->ifm_status |= IFM_ACTIVE;
-
-	return;
 }
 
 /*
