@@ -55,17 +55,17 @@ communicate with the host machine over PCIe.
 Every packet is transmitted to / from the board via one DMA transaction, taking
 up to two or three interrupts per one transaction which yields in low
 performance.
-
+.Pp
 There is no support for Jumbo frames as the hardware is capable of dealing only
 with frames with maximum size of 1514 bytes.
-
+.Pp
 The hardware provides no checksums and offers no other offloading.
 .Sh BUGS
 Pre-built bitstream from Cambridge may not work correctly - at higher RX packet
 rates, the newly incoming packets would overwrite the ones in some internal
 FIFO so the packets would come out of the board scrambled until physical reset
 of the board.
-
+.Pp
 There is also a strange behaviour in the TX path: when sending "small" packets,
 TX works as it should, but when sending packets above some size limit right
 after loading the driver, SUME doesn't send the TX_DONE interrupt and refuses
@@ -83,6 +83,6 @@ For more details, visit the NetFPGA SUME project site.
 .Xr vlan 4
 .Sh AUTHOR
 The Linux NetFPGA SUME driver was originally written by Bjoern A. Zeeb.
-The FreeBSD version is written by Denis Salopek as a GSoC project.
+The FreeBSD version was written by Denis Salopek as a GSoC project.
 More information about the project can be found here:
 .Pa https://wiki.freebsd.org/SummerOfCode2020Projects/NetFPGA_SUME_Driver
