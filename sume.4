@@ -26,21 +26,21 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd July 25, 2020
+.Dd August 18, 2020
 .Dt SUME 4
 .Os
 .Sh NAME
 .Nm sume
 .Nd "NetFPGA SUME 4x10Gb Ethernet driver"
 .Sh SYNOPSIS
-To compile this driver into the kernel, place the following lines in your
-kernel configuration file:
+To compile this driver into the kernel, place the following lines
+in your kernel configuration file:
 .Bd -ragged -offset indent
 .Cd "device sume"
 .Ed
 .Pp
-Alternatively, to load the driver as a module at boot time, place the following
-line in
+Alternatively, to load the driver as a module at boot time, place
+the following line in
 .Xr loader.conf 5 :
 .Bd -literal -offset indent
 if_sume_load="YES"
@@ -48,32 +48,43 @@ if_sume_load="YES"
 .Sh DESCRIPTION
 The
 .Nm
-driver provides support for NetFPGA SUME Virtex-7 FPGA Development Board with
-the reference NIC bitstream loaded onto it.
-The HDL design for the reference NIC project uses the RIFFA based DMA engine to
-communicate with the host machine over PCIe.
-Every packet is transmitted to / from the board via one DMA transaction, taking
-up to two or three interrupts per one transaction which yields in low
-performance.
+driver provides support for NetFPGA SUME Virtex-7 FPGA
+Development Board with the reference NIC bitstream loaded
+onto it.
+The HDL design for the reference NIC project uses
+the RIFFA based DMA engine to communicate with the host machine
+over PCIe.
+Every packet is transmitted to / from the board via
+a DMA transaction, taking up to two or three interrupts
+per one transaction which yields in
+low performance.
 .Pp
-There is no support for Jumbo frames as the hardware is capable of dealing only
-with frames with maximum size of 1514 bytes.
+There is no support for Jumbo frames as the hardware is
+capable of dealing only with frames with maximum size of
+1514 bytes.
 .Pp
-The hardware provides no checksums and offers no other offloading.
+The hardware provides no checksums and offers
+no other offloading.
 .Sh BUGS
-Pre-built bitstream from Cambridge may not work correctly - at higher RX packet
-rates, the newly incoming packets would overwrite the ones in some internal
-FIFO so the packets would come out of the board scrambled until physical reset
+Pre-built bitstream from Cambridge may not work
+correctly - at higher RX packet rates, the newly incoming packets
+would overwrite the ones in some internal FIFO so the packets
+would come out of the board scrambled until physical reset
 of the board.
 .Pp
-There is also a strange behaviour in the TX path: when sending "small" packets,
-TX works as it should, but when sending packets above some size limit right
-after loading the driver, SUME doesn't send the TX_DONE interrupt and refuses
-to send packets until the driver is reloaded / board is reset.
-This would mean that the driver would get stuck in a non-IDLE TX state but a
-watchdog-like function is implemented in the driver to check whether the
-non-IDLE state lasts more then 3 seconds and it resets the board automatically.
-For more details, visit the NetFPGA SUME project site.
+There is also a strange behaviour in the TX path: when
+sending "small" packets, TX works as it should, but when
+sending packets above some size limit right after loading
+the driver, SUME does not send the TX_DONE interrupt and
+refuses to send packets until the driver is reloaded / board
+is reset.
+This would mean that the driver would get
+stuck in a non-IDLE TX state but a watchdog-like function is
+implemented in the driver to check whether the non-IDLE state
+lasts more then 3 seconds and it resets the board
+automatically.
+For more details, visit the NetFPGA SUME
+project site.
 .Sh SEE ALSO
 .Xr arp 4 ,
 .Xr ifconfig 8 ,
@@ -82,7 +93,9 @@ For more details, visit the NetFPGA SUME project site.
 .Xr ng_ether 4 ,
 .Xr vlan 4
 .Sh AUTHOR
-The Linux NetFPGA SUME driver was originally written by Bjoern A. Zeeb.
-The FreeBSD version was written by Denis Salopek as a GSoC project.
+The Linux NetFPGA SUME driver was originally written
+by Bjoern A. Zeeb.
+The FreeBSD version was written by Denis Salopek as
+a GSoC project.
 More information about the project can be found here:
 .Pa https://wiki.freebsd.org/SummerOfCode2020Projects/NetFPGA_SUME_Driver
