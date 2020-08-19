@@ -82,11 +82,6 @@
 #define	SUME_RIFFA_CHAN_STATE_READ	0x04
 #define	SUME_RIFFA_CHAN_STATE_LEN	0x08
 
-/* Various bits and pieces. */
-#define	SUME_RIFFA_MAGIC		0xcafe
-#define	SUME_MR_WRITE			0x1f
-#define	SUME_MR_READ			0x00
-
 /* Accessor macros. */
 #define	SUME_OFFLAST			((0 << 1) | (1 & 0x01))
 #define	SUME_RIFFA_LAST(offlast)	((offlast) & 0x01)
@@ -106,10 +101,6 @@
 /* Invalid vector. */
 #define	SUME_INVALID_VECT		0xc0000000
 
-#define	SUME_DPORT_MASK			0xaa
-
-#define	SUME_MIN_PKT_SIZE		(ETHER_MIN_LEN - ETHER_CRC_LEN)
-
 /* Module register data (packet counters, link status...) */
 #define	SUME_MOD0_REG_BASE		0x44040000
 #define	SUME_MOD_REG(port)		(SUME_MOD0_REG_BASE + 0x10000 * port)
@@ -126,40 +117,45 @@
 
 #define	SUME_LINK_STATUS(val)		((val >> 12) & 0x1)
 
+/* Various bits and pieces. */
+#define	SUME_RIFFA_MAGIC		0xcafe
+#define	SUME_MR_WRITE			0x1f
+#define	SUME_MR_READ			0x00
+#define	SUME_INIT_RTAG			-3
+#define	SUME_DPORT_MASK			0xaa
+#define	SUME_MIN_PKT_SIZE		(ETHER_MIN_LEN - ETHER_CRC_LEN)
+
 struct irq {
-	struct resource		*res;
 	uint32_t		rid;
+	struct resource		*res;
 	void			*tag;
 } __aligned(CACHE_LINE_SIZE);
 
 struct nf_stats {
-	uint64_t		rx_packets;
-	uint64_t		rx_dropped;
-	uint64_t		rx_bytes;
-	uint64_t		tx_packets;
-	uint64_t		tx_dropped;
-	uint64_t		tx_bytes;
 	uint64_t		hw_rx_packets;
 	uint64_t		hw_tx_packets;
-	uint64_t		ifc_down_packets;
 	uint64_t		ifc_down_bytes;
+	uint64_t		ifc_down_packets;
+	uint64_t		rx_bytes;
+	uint64_t		rx_dropped;
+	uint64_t		rx_packets;
+	uint64_t		tx_bytes;
+	uint64_t		tx_dropped;
+	uint64_t		tx_packets;
 };
 
 struct riffa_chnl_dir {
+	uint32_t		state;
+	bus_dma_tag_t		ch_tag;
+	bus_dmamap_t		ch_map;
 	char			*buf_addr;	/* bouncebuf addresses+len. */
 	bus_addr_t		buf_hw_addr;	/* -- " -- mapped. */
 	uint32_t		num_sg;
-	uint32_t		state;
-	uint32_t		recovery;
-	uint32_t		offlast;
+	uint32_t		event;		/* Used for modreg r/w */
 	uint32_t		len;		/* words */
+	uint32_t		offlast;
+	uint32_t		recovery;
 	uint32_t		rtag;
-
-	bus_dma_tag_t		my_tag;
-	bus_dmamap_t		my_map;
-
-	/* Used only for register read/write */
-	uint32_t		event;
 };
 
 struct sume_ifreq {
@@ -169,43 +165,35 @@ struct sume_ifreq {
 
 struct nf_priv {
 	struct sume_adapter	*adapter;
-	struct ifnet		*ifp;
-	uint32_t		unit;
-	uint32_t		port;
-	uint32_t		riffa_channel;
 	struct ifmedia		media;
 	struct nf_stats		stats;
+	uint32_t		unit;
+	uint32_t		port;
 };
 
 struct sume_adapter {
 	device_t		dev;
-	uint32_t		rid;
-	struct resource		*bar0_addr;
-	bus_size_t		bar0_len;
-	bus_space_tag_t		bt;
-	bus_space_handle_t	bh;
-	struct irq		irq;
-	uint32_t		num_chnls;
-	uint32_t		num_sg;
-	uint32_t		sg_buf_size;
-	uint32_t		running;
-	struct ifnet		*ifp[4];
 	struct mtx		lock;
-
+	uint32_t		running;
 	struct riffa_chnl_dir	**recv;
 	struct riffa_chnl_dir	**send;
-
-	uint32_t		last_ifc;
-
+	struct ifnet		*ifp[SUME_NPORTS];
+	uint32_t		rid;
+	struct resource		*bar0_addr;
+	bus_space_tag_t		bt;
+	bus_space_handle_t	bh;
+	bus_size_t		bar0_len;
+	struct irq		irq;
+	uint32_t		num_sg;
+	uint32_t		sg_buf_size;
+	uint32_t		sume_debug;
 	uint64_t		packets_err;
 	uint64_t		bytes_err;
-	uint32_t		sume_debug;
-
 	struct callout		timer;
 	struct task		stat_task;
 	struct taskqueue	*tq;
-
 	uint32_t		wd_counter;
+	uint32_t		last_ifc;
 };
 
 /* SUME metadata:

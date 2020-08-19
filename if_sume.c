@@ -458,7 +458,7 @@ sume_intr_handler(void *arg)
 				sume_fill_bb_desc(adapter, recv,
 				    SUME_RIFFA_LEN(recv->len));
 
-				bus_dmamap_sync(recv->my_tag, recv->my_map,
+				bus_dmamap_sync(recv->ch_tag, recv->ch_map,
 				    BUS_DMASYNC_PREREAD |
 				    BUS_DMASYNC_PREWRITE);
 				write_reg(adapter, RIFFA_CHNL_REG(i,
@@ -470,7 +470,7 @@ sume_intr_handler(void *arg)
 				write_reg(adapter, RIFFA_CHNL_REG(i,
 				    RIFFA_TX_SG_LEN_REG_OFF),
 				    4 *recv->num_sg);
-				bus_dmamap_sync(recv->my_tag, recv->my_map,
+				bus_dmamap_sync(recv->ch_tag, recv->ch_map,
 				    BUS_DMASYNC_POSTREAD |
 				    BUS_DMASYNC_POSTWRITE);
 
@@ -720,7 +720,7 @@ sume_modreg_write_locked(struct sume_adapter *adapter)
 	/* Update the state before intiating the DMA to avoid races. */
 	send->state = SUME_RIFFA_CHAN_STATE_READY;
 
-	bus_dmamap_sync(send->my_tag, send->my_map,
+	bus_dmamap_sync(send->ch_tag, send->ch_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	/* DMA. */
 	write_reg(adapter, RIFFA_CHNL_REG(SUME_RIFFA_CHANNEL_REG,
@@ -731,7 +731,7 @@ sume_modreg_write_locked(struct sume_adapter *adapter)
 	    SUME_RIFFA_HI_ADDR(send->buf_hw_addr));
 	write_reg(adapter, RIFFA_CHNL_REG(SUME_RIFFA_CHANNEL_REG,
 	    RIFFA_RX_SG_LEN_REG_OFF), 4 * send->num_sg);
-	bus_dmamap_sync(send->my_tag, send->my_map,
+	bus_dmamap_sync(send->ch_tag, send->ch_map,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
 	return (0);
@@ -751,9 +751,6 @@ sume_module_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 	struct nf_regop_data *data;
 	int error;
 	struct riffa_chnl_dir *send;
-
-	KASSERT(nf_priv->riffa_channel == SUME_RIFFA_CHANNEL_REG,
-	    ("write on non-reg channel"));
 
 	adapter = nf_priv->adapter;
 	send = adapter->send[SUME_RIFFA_CHANNEL_REG];
@@ -824,9 +821,6 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	int error = 0;
 	struct riffa_chnl_dir *recv, *send;
 
-	KASSERT(nf_priv->riffa_channel == SUME_RIFFA_CHANNEL_REG,
-	    ("write on non-reg channel"));
-
 	adapter = nf_priv->adapter;
 	recv = adapter->recv[SUME_RIFFA_CHANNEL_REG];
 	send = adapter->send[SUME_RIFFA_CHANNEL_REG];
@@ -839,7 +833,7 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	 */
 	SUME_LOCK(adapter);
 
-	bus_dmamap_sync(recv->my_tag, recv->my_map,
+	bus_dmamap_sync(recv->ch_tag, recv->ch_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	/*
 	 * We only need to be woken up at the end of the transaction.
@@ -856,7 +850,7 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 		return (EWOULDBLOCK);
 	}
 
-	bus_dmamap_sync(recv->my_tag, recv->my_map,
+	bus_dmamap_sync(recv->ch_tag, recv->ch_map,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
 	/*
@@ -1021,8 +1015,6 @@ sume_if_start_locked(struct ifnet *ifp)
 	int plen = SUME_MIN_PKT_SIZE;
 
 	KASSERT(mtx_owned(&adapter->lock), ("SUME lock not owned"));
-	KASSERT(nf_priv->riffa_channel == SUME_RIFFA_CHANNEL_DATA,
-	    ("TX on non-data channel"));
 	KASSERT(send->state == SUME_RIFFA_CHAN_STATE_IDLE,
 	    ("SUME not in IDLE state"));
 
@@ -1035,7 +1027,8 @@ sume_if_start_locked(struct ifnet *ifp)
 		plen = m->m_pkthdr.len;
 
 	if (adapter->sume_debug)
-		printf("Sending %d bytes to nf%d\n", plen, nf_priv->unit);
+		printf("Sending %d bytes to %s%d\n", plen,
+		    SUME_ETH_DEVICE_NAME, nf_priv->unit);
 
 	outbuf = (uint8_t *) send->buf_addr + sizeof(struct nf_bb_desc);
 	mdata = (struct nf_metadata *) outbuf;
@@ -1053,7 +1046,7 @@ sume_if_start_locked(struct ifnet *ifp)
 		return (ENOMEM);
 	}
 
-	bus_dmamap_sync(send->my_tag, send->my_map,
+	bus_dmamap_sync(send->ch_tag, send->ch_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 	/* Zero out the padded data */
@@ -1093,7 +1086,7 @@ sume_if_start_locked(struct ifnet *ifp)
 	write_reg(adapter, RIFFA_CHNL_REG(SUME_RIFFA_CHANNEL_DATA,
 	    RIFFA_RX_SG_LEN_REG_OFF), 4 * send->num_sg);
 
-	bus_dmamap_sync(send->my_tag, send->my_map,
+	bus_dmamap_sync(send->ch_tag, send->ch_map,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
 	nf_priv->stats.tx_packets++;
@@ -1115,9 +1108,6 @@ sume_if_start(struct ifnet *ifp)
 {
 	struct nf_priv *nf_priv = ifp->if_softc;
 	struct sume_adapter *adapter = nf_priv->adapter;
-
-	KASSERT(nf_priv->riffa_channel == SUME_RIFFA_CHANNEL_DATA,
-	    ("TX on non-data channel"));
 
 	if (!adapter->running || !(ifp->if_flags & IFF_UP))
 		return;
@@ -1170,7 +1160,9 @@ sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 	adapter->ifp[port] = ifp;
 	ifp->if_softc = nf_priv;
 
+	nf_priv->adapter = adapter;
 	nf_priv->unit = alloc_unr(unr);
+	nf_priv->port = port;
 
 	if_initname(ifp, SUME_ETH_DEVICE_NAME, nf_priv->unit);
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
@@ -1178,11 +1170,6 @@ sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 	ifp->if_init = sume_if_init;
 	ifp->if_start = sume_if_start;
 	ifp->if_ioctl = sume_if_ioctl;
-
-	nf_priv->adapter = adapter;
-	nf_priv->ifp = ifp;
-	nf_priv->port = port;
-	nf_priv->riffa_channel = SUME_RIFFA_CHANNEL_DATA;
 
 	uint8_t hw_addr[ETHER_ADDR_LEN] = DEFAULT_ETHER_ADDRESS;
 	hw_addr[ETHER_ADDR_LEN-1] = nf_priv->unit;
@@ -1251,7 +1238,7 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 		    0,
 		    NULL,
 		    NULL,
-		    &rp[i]->my_tag);
+		    &rp[i]->ch_tag);
 
 		if (err) {
 			device_printf(dev, "%s: bus_dma_tag_create(%s[%d]) "
@@ -1259,9 +1246,9 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 			return (err);
 		}
 
-		err = bus_dmamem_alloc(rp[i]->my_tag, (void **)
+		err = bus_dmamem_alloc(rp[i]->ch_tag, (void **)
 		    &rp[i]->buf_addr, BUS_DMA_WAITOK | BUS_DMA_COHERENT |
-		    BUS_DMA_ZERO, &rp[i]->my_map);
+		    BUS_DMA_ZERO, &rp[i]->ch_map);
 		if (err) {
 			device_printf(dev, "%s: bus_dmamem_alloc(%s[%d]) "
 			    "rp[i]->buf_addr failed.\n", __func__, dir, i);
@@ -1270,7 +1257,7 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 
 		bzero(rp[i]->buf_addr, adapter->sg_buf_size);
 
-		err = bus_dmamap_load(rp[i]->my_tag, rp[i]->my_map,
+		err = bus_dmamap_load(rp[i]->ch_tag, rp[i]->ch_map,
 		    rp[i]->buf_addr, adapter->sg_buf_size, callback_dma,
 		    &hw_addr, BUS_DMA_NOWAIT);
 		if (err) {
@@ -1280,9 +1267,9 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 		}
 		rp[i]->buf_hw_addr = hw_addr;
 		rp[i]->num_sg = 1;
-
-		rp[i]->rtag = -3;
 		rp[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
+
+		rp[i]->rtag = SUME_INIT_RTAG;
 	}
 
 	return (0);
@@ -1337,7 +1324,8 @@ sume_sysctl_init(struct sume_adapter *adapter)
 
 		struct nf_priv *nf_priv = ifp->if_softc;
 
-		snprintf(namebuf, IFC_NAME_LEN, "nf%d", nf_priv->unit);
+		snprintf(namebuf, IFC_NAME_LEN, "%s%d", SUME_ETH_DEVICE_NAME,
+		    nf_priv->unit);
 		tmp_tree = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, namebuf,
 		    CTLFLAG_RW, 0, "SUME ifc tree");
 		if (tmp_tree == NULL) {
@@ -1509,8 +1497,8 @@ sume_remove_riffa_buffer(const struct sume_adapter *adapter,
 			continue;
 
 		if (pp[i]->buf_hw_addr != 0) {
-			bus_dmamem_free(pp[i]->my_tag, pp[i]->buf_addr,
-			    pp[i]->my_map);
+			bus_dmamem_free(pp[i]->ch_tag, pp[i]->buf_addr,
+			    pp[i]->ch_map);
 			pp[i]->buf_hw_addr = 0;
 		}
 
