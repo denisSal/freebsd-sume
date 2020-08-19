@@ -236,7 +236,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
 	plen = le16toh(mdata->plen);
 	magic = le16toh(mdata->magic);
 
-	if ((sizeof(struct nf_metadata) + plen) > len ||
+	if (sizeof(struct nf_metadata) + plen > len ||
 	    magic != SUME_RIFFA_MAGIC) {
 		device_printf(dev, "%s: corrupted packet (%zd + %d > %d "
 		    "|| magic 0x%04x != 0x%04x)\n", __func__, sizeof(struct
@@ -412,7 +412,7 @@ sume_intr_handler(void *arg)
 
 		loops = 0;
 		while ((vect & (SUME_MSI_RXQUE | SUME_MSI_RXBUF |
-			SUME_MSI_RXDONE)) && loops < 5) {
+		    SUME_MSI_RXDONE)) && loops < 5) {
 			if (adapter->sume_debug)
 				device_printf(dev, "%s: RX ch %d state %u "
 				    "vect = 0x%08x\n", __func__, i,
@@ -448,8 +448,8 @@ sume_intr_handler(void *arg)
 					device_printf(dev, "%s: receive buffer"
 					    " wrap-around overflow.\n",
 					    __func__);
-				if ((SUME_RIFFA_OFFSET(recv->offlast) +
-				    SUME_RIFFA_LEN(recv->len)) >
+				if (SUME_RIFFA_OFFSET(recv->offlast) +
+				    SUME_RIFFA_LEN(recv->len) >
 				    adapter->sg_buf_size)
 					device_printf(dev, "%s: receive buffer"
 					    " too small.\n", __func__);
@@ -501,10 +501,7 @@ sume_intr_handler(void *arg)
 				len = read_reg(adapter, RIFFA_CHNL_REG(i,
 				    RIFFA_TX_TNFR_LEN_REG_OFF));
 
-				/*
-				 * Remember, len and recv[i]->len
-				 * are words.
-				 */
+				/* Remember, len and recv->len are words. */
 				if (i == SUME_RIFFA_CHANNEL_DATA) {
 					m = sume_rx_build_mbuf(adapter, 
 					    len << 2);
@@ -642,43 +639,43 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 	/* Check bus master is enabled. */
 	if (((reg >> 4) & 0x1) != 1) {
 		device_printf(dev, "%s: bus master not enabled: %d\n",
-		    __func__, ((reg >> 4) & 0x1));
+		    __func__, (reg >> 4) & 0x1);
 		return (error);
 	}
 	/* Check link parameters are valid. */
 	if (((reg >> 5) & 0x3f) == 0 || ((reg >> 11) & 0x3) == 0) {
 		device_printf(dev, "%s: link parameters not valid: %d %d\n",
-		    __func__, ((reg >> 5) & 0x3f), ((reg >> 11) & 0x3));
+		    __func__, (reg >> 5) & 0x3f, (reg >> 11) & 0x3);
 		return (error);
 	}
 	/* Check # of channels are within valid range. */
 	if ((reg & 0xf) == 0 || (reg & 0xf) > RIFFA_MAX_CHNLS) {
 		device_printf(dev, "%s: number of channels out of range: %d\n",
-		    __func__, (reg & 0xf));
+		    __func__, reg & 0xf);
 		return (error);
 	}
 	/* Check bus width. */
 	if (((reg >> 19) & 0xf) == 0 ||
 	    ((reg >> 19) & 0xf) > RIFFA_MAX_BUS_WIDTH_PARAM) {
 		device_printf(dev, "%s: bus width out f range: %d\n",
-		    __func__, ((reg >> 19) & 0xf));
+		    __func__, (reg >> 19) & 0xf);
 		return (error);
 	}
 
 	device_printf(dev, "[riffa] # of channels: %d\n",
-	    (reg & 0xf));
+	    reg & 0xf);
 	device_printf(dev, "[riffa] bus interface width: %d\n",
-	    (((reg >> 19) & 0xf) << 5));
+	    ((reg >> 19) & 0xf) << 5);
 	device_printf(dev, "[riffa] bus master enabled: %d\n",
-	    ((reg >> 4) & 0x1));
+	    (reg >> 4) & 0x1);
 	device_printf(dev, "[riffa] negotiated link width: %d\n",
-	    ((reg >> 5) & 0x3f));
+	    (reg >> 5) & 0x3f);
 	device_printf(dev, "[riffa] negotiated rate width: %d MTs\n",
 	    ((reg >> 11) & 0x3) * 2500);
 	device_printf(dev, "[riffa] max downstream payload: %d B\n",
-	    (128 << ((reg >> 13) & 0x7)));
+	    128 << ((reg >> 13) & 0x7));
 	device_printf(dev, "[riffa] max upstream payload: %d B\n",
-	    (128 << ((reg >> 16) & 0x7)));
+	    128 << ((reg >> 16) & 0x7));
 
 	return (0);
 
@@ -1027,7 +1024,7 @@ sume_if_start_locked(struct ifnet *ifp)
 		plen = m->m_pkthdr.len;
 
 	if (adapter->sume_debug)
-		printf("Sending %d bytes to %s%d\n", plen,
+		device_printf(adapter->dev, "Sending %d bytes to %s%d\n", plen,
 		    SUME_ETH_DEVICE_NAME, nf_priv->unit);
 
 	outbuf = (uint8_t *) send->buf_addr + sizeof(struct nf_bb_desc);
@@ -1037,7 +1034,7 @@ sume_if_start_locked(struct ifnet *ifp)
 	send->recovery = 0;
 
 	/* Make sure we fit with the 16 bytes nf_metadata. */
-	if ((m->m_pkthdr.len + sizeof(struct nf_metadata)) >
+	if (m->m_pkthdr.len + sizeof(struct nf_metadata) >
 	    adapter->sg_buf_size) {
 		device_printf(adapter->dev, "%s: Packet too big for bounce "
 		    "buffer (%d)\n", __func__, m->m_pkthdr.len);
@@ -1188,10 +1185,8 @@ sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 static void
 callback_dma(void *arg, bus_dma_segment_t *segs, int nseg, int err)
 {
-	if (err) {
-		printf("DMA error\n");
+	if (err)
 		return;
-	}
 
 	KASSERT(nseg == 1, ("%s: %d segments returned!", __func__, nseg));
 
@@ -1297,6 +1292,7 @@ sume_sysctl_init(struct sume_adapter *adapter)
 	struct sysctl_oid *tree = device_get_sysctl_tree(dev);
 	struct sysctl_oid_list *child = SYSCTL_CHILDREN(tree);
 	struct sysctl_oid *tmp_tree;
+	char namebuf[MAX_IFC_NAME_LEN];
 	int i;
 
 	tree = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, "sume", CTLFLAG_RW,
@@ -1314,9 +1310,6 @@ sume_sysctl_init(struct sume_adapter *adapter)
 	SYSCTL_ADD_U64(ctx, child, OID_AUTO, "rx_ebytes",
 	    CTLFLAG_RD, &adapter->bytes_err, 0, "rx error bytes");
 
-#define	IFC_NAME_LEN 8
-	char namebuf[IFC_NAME_LEN];
-
 	for (i = SUME_NPORTS - 1; i >= 0; i--) {
 		struct ifnet *ifp = adapter->ifp[i];
 		if (ifp == NULL)
@@ -1324,8 +1317,8 @@ sume_sysctl_init(struct sume_adapter *adapter)
 
 		struct nf_priv *nf_priv = ifp->if_softc;
 
-		snprintf(namebuf, IFC_NAME_LEN, "%s%d", SUME_ETH_DEVICE_NAME,
-		    nf_priv->unit);
+		snprintf(namebuf, MAX_IFC_NAME_LEN, "%s%d",
+		    SUME_ETH_DEVICE_NAME, nf_priv->unit);
 		tmp_tree = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, namebuf,
 		    CTLFLAG_RW, 0, "SUME ifc tree");
 		if (tmp_tree == NULL) {
@@ -1386,8 +1379,8 @@ sume_local_timer(void *arg)
 	taskqueue_enqueue(adapter->tq, &adapter->stat_task);
 
 	SUME_LOCK(adapter);
-	if ((adapter->send[SUME_RIFFA_CHANNEL_DATA]->state !=
-	    SUME_RIFFA_CHAN_STATE_IDLE) && (++adapter->wd_counter >= 3)) {
+	if (adapter->send[SUME_RIFFA_CHANNEL_DATA]->state !=
+	    SUME_RIFFA_CHAN_STATE_IDLE && ++adapter->wd_counter >= 3) {
 		/* Resetting interfaces if stuck for 3 seconds. */
 		device_printf(adapter->dev, "TX stuck, resetting adapter.\n");
 		read_reg(adapter, RIFFA_INFO_REG_OFF);

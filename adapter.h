@@ -34,6 +34,7 @@
 
 #define	DEFAULT_ETHER_ADDRESS		"\02SUME\00"
 #define	SUME_ETH_DEVICE_NAME		"sume"
+#define	MAX_IFC_NAME_LEN		8
 
 #define	SUME_NPORTS			4
 
