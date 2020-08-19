@@ -172,13 +172,13 @@ struct nf_priv {
 };
 
 struct sume_adapter {
-	device_t		dev;
 	struct mtx		lock;
 	uint32_t		running;
+	uint32_t		rid;
 	struct riffa_chnl_dir	**recv;
 	struct riffa_chnl_dir	**send;
+	device_t		dev;
 	struct ifnet		*ifp[SUME_NPORTS];
-	uint32_t		rid;
 	struct resource		*bar0_addr;
 	bus_space_tag_t		bt;
 	bus_space_handle_t	bh;
