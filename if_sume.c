@@ -114,8 +114,8 @@ static driver_t sume_driver = {
  * (8) We read the first 16 bytes (metadata) of the received data and note the
  *     incoming interface so we can later forward it to the right one in the OS
  *     (sume0, sume1, sume2 or sume3).
- * (10) We create an mbuf and copy the data from the bouncebuffer to the mbuf and
- *     set the mbuf rcvif to the incoming interface.
+ * (10) We create an mbuf and copy the data from the bouncebuffer to the mbuf
+ *     and set the mbuf rcvif to the incoming interface.
  * (11) We forward the mbuf to the appropriate interface via ifp->if_input.
  *
  * When sending packets to SUME (TX):
