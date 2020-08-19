@@ -1314,7 +1314,7 @@ sume_sysctl_init(struct sume_adapter *adapter)
 	SYSCTL_ADD_U64(ctx, child, OID_AUTO, "rx_ebytes",
 	    CTLFLAG_RD, &adapter->bytes_err, 0, "rx error bytes");
 
-#define	IFC_NAME_LEN 4
+#define	IFC_NAME_LEN 8
 	char namebuf[IFC_NAME_LEN];
 
 	for (i = SUME_NPORTS - 1; i >= 0; i--) {
