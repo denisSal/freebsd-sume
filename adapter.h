@@ -184,16 +184,16 @@ struct sume_adapter {
 	bus_space_handle_t	bh;
 	bus_size_t		bar0_len;
 	struct irq		irq;
-	uint32_t		num_sg;
-	uint32_t		sg_buf_size;
-	uint32_t		sume_debug;
-	uint64_t		packets_err;
-	uint64_t		bytes_err;
 	struct callout		timer;
 	struct task		stat_task;
 	struct taskqueue	*tq;
-	uint32_t		wd_counter;
+	uint64_t		bytes_err;
+	uint64_t		packets_err;
 	uint32_t		last_ifc;
+	uint32_t		num_sg;
+	uint32_t		sg_buf_size;
+	uint32_t		sume_debug;
+	uint32_t		wd_counter;
 };
 
 /* SUME metadata:
