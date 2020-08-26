@@ -1193,7 +1193,7 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 {
 	struct riffa_chnl_dir **rp;
 	bus_addr_t hw_addr;
-	int error, i;
+	int error, ch;
 	device_t dev = adapter->dev;
 
 	error = ENOMEM;
@@ -1206,13 +1206,13 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 
 	rp = *p;
 	/* Allocate the chnl_dir structs themselves. */
-	for (i = 0; i < SUME_RIFFA_CHANNELS; i++) {
+	for (ch = 0; ch < SUME_RIFFA_CHANNELS; ch++) {
 		/* One direction. */
-		rp[i] = malloc(sizeof(struct riffa_chnl_dir), M_SUME,
+		rp[ch] = malloc(sizeof(struct riffa_chnl_dir), M_SUME,
 		    M_ZERO | M_WAITOK);
-		if (rp[i] == NULL) {
+		if (rp[ch] == NULL) {
 			device_printf(dev, "malloc(%s[%d]) riffa_chnl_dir "
-			    "failed.\n", dir, i);
+			    "failed.\n", dir, ch);
 			return (error);
 		}
 
@@ -1227,38 +1227,38 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 		    0,
 		    NULL,
 		    NULL,
-		    &rp[i]->ch_tag);
+		    &rp[ch]->ch_tag);
 
 		if (err) {
 			device_printf(dev, "bus_dma_tag_create(%s[%d]) "
-			    "failed.\n", dir, i);
+			    "failed.\n", dir, ch);
 			return (err);
 		}
 
-		err = bus_dmamem_alloc(rp[i]->ch_tag, (void **)
-		    &rp[i]->buf_addr, BUS_DMA_WAITOK | BUS_DMA_COHERENT |
-		    BUS_DMA_ZERO, &rp[i]->ch_map);
+		err = bus_dmamem_alloc(rp[ch]->ch_tag, (void **)
+		    &rp[ch]->buf_addr, BUS_DMA_WAITOK | BUS_DMA_COHERENT |
+		    BUS_DMA_ZERO, &rp[ch]->ch_map);
 		if (err) {
 			device_printf(dev, "bus_dmamem_alloc(%s[%d]) failed.\n",
-			    dir, i);
+			    dir, ch);
 			return (err);
 		}
 
-		bzero(rp[i]->buf_addr, adapter->sg_buf_size);
+		bzero(rp[ch]->buf_addr, adapter->sg_buf_size);
 
-		err = bus_dmamap_load(rp[i]->ch_tag, rp[i]->ch_map,
-		    rp[i]->buf_addr, adapter->sg_buf_size, callback_dma,
+		err = bus_dmamap_load(rp[ch]->ch_tag, rp[ch]->ch_map,
+		    rp[ch]->buf_addr, adapter->sg_buf_size, callback_dma,
 		    &hw_addr, BUS_DMA_NOWAIT);
 		if (err) {
 			device_printf(dev, "bus_dmamap_load(%s[%d]) failed.\n",
-			    dir, i);
+			    dir, ch);
 			return (err);
 		}
-		rp[i]->buf_hw_addr = hw_addr;
-		rp[i]->num_sg = 1;
-		rp[i]->state = SUME_RIFFA_CHAN_STATE_IDLE;
+		rp[ch]->buf_hw_addr = hw_addr;
+		rp[ch]->num_sg = 1;
+		rp[ch]->state = SUME_RIFFA_CHAN_STATE_IDLE;
 
-		rp[i]->rtag = SUME_INIT_RTAG;
+		rp[ch]->rtag = SUME_INIT_RTAG;
 	}
 
 	return (0);
@@ -1477,19 +1477,19 @@ static void
 sume_remove_riffa_buffer(const struct sume_adapter *adapter,
     struct riffa_chnl_dir **pp)
 {
-	int i;
+	int ch;
 
-	for (i = 0; i < SUME_RIFFA_CHANNELS; i++) {
-		if (pp[i] == NULL)
+	for (ch = 0; ch < SUME_RIFFA_CHANNELS; ch++) {
+		if (pp[ch] == NULL)
 			continue;
 
-		if (pp[i]->buf_hw_addr != 0) {
-			bus_dmamem_free(pp[i]->ch_tag, pp[i]->buf_addr,
-			    pp[i]->ch_map);
-			pp[i]->buf_hw_addr = 0;
+		if (pp[ch]->buf_hw_addr != 0) {
+			bus_dmamem_free(pp[ch]->ch_tag, pp[ch]->buf_addr,
+			    pp[ch]->ch_map);
+			pp[ch]->buf_hw_addr = 0;
 		}
 
-		free(pp[i], M_SUME);
+		free(pp[ch], M_SUME);
 	}
 }
 
