@@ -372,10 +372,9 @@ sume_intr_handler(void *arg)
 					    "vect = 0x%08x\n", ch, send->state,
 					    vect);
 					send->recovery = 1;
-					send->state =
-					    SUME_RIFFA_CHAN_STATE_LEN;
 					break;
 				}
+				send->state = SUME_RIFFA_CHAN_STATE_LEN;
 
 				len = read_reg(adapter, RIFFA_CHNL_REG(ch,
 				    RIFFA_RX_TNFR_LEN_REG_OFF));
@@ -523,10 +522,19 @@ sume_intr_handler(void *arg)
 		}
 
 		if ((vect & (SUME_MSI_RXQUE | SUME_MSI_RXBUF |
-		    SUME_MSI_RXDONE)) && recv->recovery)
+		    SUME_MSI_RXDONE)) && recv->recovery) {
 			device_printf(dev, "ch %d ignoring vect = 0x%08x "
 			    "during RX; not in recovery; state = %d, loops = "
 			    "%d\n", ch, vect, recv->state, loops);
+
+			/* Clean the unfinished transaction. */
+			if (ch == SUME_RIFFA_CHANNEL_REG &&
+			    vect & SUME_MSI_RXDONE) {
+				read_reg(adapter, RIFFA_CHNL_REG(ch,
+				    RIFFA_TX_TNFR_LEN_REG_OFF));
+				recv->recovery = 0;
+			}
+		}
 	}
 	SUME_UNLOCK(adapter);
 
