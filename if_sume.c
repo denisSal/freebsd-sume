@@ -322,7 +322,7 @@ sume_intr_handler(void *arg)
 {
 	struct sume_adapter *adapter = arg;
 	uint32_t vect, vect0, len;
-	int i, loops;
+	int ch, loops;
 	device_t dev = adapter->dev;
 	struct mbuf *m = NULL;
 	struct ifnet *ifp = NULL;
@@ -340,17 +340,17 @@ sume_intr_handler(void *arg)
 	 * We only have one interrupt for all channels and no way
 	 * to quickly lookup for which channel(s) we got an interrupt?
 	 */
-	for (i = 0; i < SUME_RIFFA_CHANNELS; i++) {
-		vect = vect0 >> (5 * i);
-		send = adapter->send[i];
-		recv = adapter->recv[i];
+	for (ch = 0; ch < SUME_RIFFA_CHANNELS; ch++) {
+		vect = vect0 >> (5 * ch);
+		send = adapter->send[ch];
+		recv = adapter->recv[ch];
 
 		loops = 0;
 		while ((vect & (SUME_MSI_TXBUF | SUME_MSI_TXDONE)) &&
 		    loops <= 5) {
 			if (adapter->sume_debug)
 				device_printf(dev, "%s: TX ch %d state %u "
-				    "vect = 0x%08x\n", __func__, i,
+				    "vect = 0x%08x\n", __func__, ch,
 				    send->state, vect);
 			switch (send->state) {
 			case SUME_RIFFA_CHAN_STATE_IDLE:
@@ -360,7 +360,7 @@ sume_intr_handler(void *arg)
 					device_printf(dev, "%s: ch %d "
 					    "unexpected interrupt in send+3 "
 					    "state %u: vect = 0x%08x\n",
-					    __func__, i, send->state, vect);
+					    __func__, ch, send->state, vect);
 					send->recovery = 1;
 					break;
 				}
@@ -372,25 +372,25 @@ sume_intr_handler(void *arg)
 					device_printf(dev, "%s: ch %d "
 					    "unexpected interrupt in send+4 "
 					    "state %u: vect = 0x%08x\n",
-					    __func__, i, send->state, vect);
+					    __func__, ch, send->state, vect);
 					send->recovery = 1;
 					send->state =
 					    SUME_RIFFA_CHAN_STATE_LEN;
 					break;
 				}
 
-				len = read_reg(adapter, RIFFA_CHNL_REG(i,
+				len = read_reg(adapter, RIFFA_CHNL_REG(ch,
 				    RIFFA_RX_TNFR_LEN_REG_OFF));
-				if (i == SUME_RIFFA_CHANNEL_DATA) {
+				if (ch == SUME_RIFFA_CHANNEL_DATA) {
 					send->state =
 					    SUME_RIFFA_CHAN_STATE_IDLE;
 					check_tx_queues(adapter);
-				} else if (i == SUME_RIFFA_CHANNEL_REG)
+				} else if (ch == SUME_RIFFA_CHANNEL_REG)
 					wakeup(&send->event);
 				else {
 					device_printf(dev, "%s: interrupt on "
 					    "ch %d unexpected in send+4 state "
-					    "%u: vect = 0x%08x\n", __func__, i,
+					    "%u: vect = 0x%08x\n", __func__, ch,
 					    send->state, vect);
 					send->recovery = 1;
 				}
@@ -415,7 +415,7 @@ sume_intr_handler(void *arg)
 		    SUME_MSI_RXDONE)) && loops < 5) {
 			if (adapter->sume_debug)
 				device_printf(dev, "%s: RX ch %d state %u "
-				    "vect = 0x%08x\n", __func__, i,
+				    "vect = 0x%08x\n", __func__, ch,
 				    recv->state, vect);
 			switch (recv->state) {
 			case SUME_RIFFA_CHAN_STATE_IDLE:
@@ -423,7 +423,7 @@ sume_intr_handler(void *arg)
 					device_printf(dev, "%s: ch %d "
 					    "unexpected interrupt in recv+0 "
 					    "state %u: vect = 0x%08x\n",
-					    __func__, i, recv->state, vect);
+					    __func__, ch, recv->state, vect);
 					recv->recovery = 1;
 					break;
 				}
@@ -434,9 +434,9 @@ sume_intr_handler(void *arg)
 
 				/* Get offset and length. */
 				recv->offlast = read_reg(adapter,
-				    RIFFA_CHNL_REG(i,
+				    RIFFA_CHNL_REG(ch,
 				    RIFFA_TX_OFFLAST_REG_OFF));
-				recv->len = read_reg(adapter, RIFFA_CHNL_REG(i,
+				recv->len = read_reg(adapter, RIFFA_CHNL_REG(ch,
 				    RIFFA_TX_LEN_REG_OFF));
 
 				/* Boundary checks. */
@@ -461,13 +461,13 @@ sume_intr_handler(void *arg)
 				bus_dmamap_sync(recv->ch_tag, recv->ch_map,
 				    BUS_DMASYNC_PREREAD |
 				    BUS_DMASYNC_PREWRITE);
-				write_reg(adapter, RIFFA_CHNL_REG(i,
+				write_reg(adapter, RIFFA_CHNL_REG(ch,
 				    RIFFA_TX_SG_ADDR_LO_REG_OFF),
 				    SUME_RIFFA_LO_ADDR(recv->buf_hw_addr));
-				write_reg(adapter, RIFFA_CHNL_REG(i,
+				write_reg(adapter, RIFFA_CHNL_REG(ch,
 				    RIFFA_TX_SG_ADDR_HI_REG_OFF),
 				    SUME_RIFFA_HI_ADDR(recv->buf_hw_addr));
-				write_reg(adapter, RIFFA_CHNL_REG(i,
+				write_reg(adapter, RIFFA_CHNL_REG(ch,
 				    RIFFA_TX_SG_LEN_REG_OFF),
 				    4 *recv->num_sg);
 				bus_dmamap_sync(recv->ch_tag, recv->ch_map,
@@ -482,7 +482,7 @@ sume_intr_handler(void *arg)
 					device_printf(dev, "%s: ch %d "
 					    "unexpected interrupt in recv+1 "
 					    "state %u: vect = 0x%08x\n",
-					    __func__, i, recv->state, vect);
+					    __func__, ch, recv->state, vect);
 					recv->recovery = 1;
 					break;
 				}
@@ -494,25 +494,25 @@ sume_intr_handler(void *arg)
 					device_printf(dev, "%s: ch %d "
 					    "unexpected interrupt in recv+2 "
 					    "state %u: vect = 0x%08x\n",
-					    __func__, i, recv->state, vect);
+					    __func__, ch, recv->state, vect);
 					recv->recovery = 1;
 					break;
 				}
-				len = read_reg(adapter, RIFFA_CHNL_REG(i,
+				len = read_reg(adapter, RIFFA_CHNL_REG(ch,
 				    RIFFA_TX_TNFR_LEN_REG_OFF));
 
 				/* Remember, len and recv->len are words. */
-				if (i == SUME_RIFFA_CHANNEL_DATA) {
+				if (ch == SUME_RIFFA_CHANNEL_DATA) {
 					m = sume_rx_build_mbuf(adapter, 
 					    len << 2);
 					recv->state =
 					    SUME_RIFFA_CHAN_STATE_IDLE;
-				} else if (i == SUME_RIFFA_CHANNEL_REG)
+				} else if (ch == SUME_RIFFA_CHANNEL_REG)
 					wakeup(&recv->event);
 				else {
 					device_printf(dev, "%s: interrupt on "
 					    "ch %d unexpected in recv+2 state "
-					    "%u: vect = 0x%08x\n", __func__, i,
+					    "%u: vect = 0x%08x\n", __func__, ch,
 					    recv->state, vect);
 					recv->recovery = 1;
 				}
