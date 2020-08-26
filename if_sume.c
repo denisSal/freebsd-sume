@@ -464,7 +464,7 @@ sume_intr_handler(void *arg)
 				    SUME_RIFFA_HI_ADDR(recv->buf_hw_addr));
 				write_reg(adapter, RIFFA_CHNL_REG(ch,
 				    RIFFA_TX_SG_LEN_REG_OFF),
-				    4 *recv->num_sg);
+				    4 * recv->num_sg);
 				bus_dmamap_sync(recv->ch_tag, recv->ch_map,
 				    BUS_DMASYNC_POSTREAD |
 				    BUS_DMASYNC_POSTWRITE);
