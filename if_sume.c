@@ -225,8 +225,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
 
 	/* The metadata header is 16 bytes. */
 	if (len < sizeof(struct nf_metadata)) {
-		device_printf(dev, "%s: short frame (%d)\n",
-		    __func__, len);
+		device_printf(dev, "short frame (%d)\n", len);
 		adapter->packets_err++;
 		adapter->bytes_err += len;
 		return (NULL);
@@ -238,17 +237,17 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
 
 	if (sizeof(struct nf_metadata) + plen > len ||
 	    magic != SUME_RIFFA_MAGIC) {
-		device_printf(dev, "%s: corrupted packet (%zd + %d > %d "
-		    "|| magic 0x%04x != 0x%04x)\n", __func__, sizeof(struct
-		    nf_metadata), plen, len, magic, SUME_RIFFA_MAGIC);
+		device_printf(dev, "corrupted packet (%zd + %d > %d || magic "
+		    "0x%04x != 0x%04x)\n", sizeof(struct nf_metadata), plen,
+		    len, magic, SUME_RIFFA_MAGIC);
 		return (NULL);
 	}
 
 	/* We got the packet from one of the even bits */
 	np = (ffs(dport & SUME_DPORT_MASK) >> 1) - 1;
 	if (np > SUME_NPORTS) {
-		device_printf(dev, "%s: invalid destination port 0x%04x"
-		    "(%d)\n", __func__, dport, np);
+		device_printf(dev, "invalid destination port 0x%04x (%d)\n",
+		    dport, np);
 		adapter->packets_err++;
 		adapter->bytes_err += plen;
 		return (NULL);
@@ -349,18 +348,17 @@ sume_intr_handler(void *arg)
 		while ((vect & (SUME_MSI_TXBUF | SUME_MSI_TXDONE)) &&
 		    loops <= 5) {
 			if (adapter->sume_debug)
-				device_printf(dev, "%s: TX ch %d state %u "
-				    "vect = 0x%08x\n", __func__, ch,
-				    send->state, vect);
+				device_printf(dev, "TX ch %d state %u vect = "
+				    "0x%08x\n", ch, send->state, vect);
 			switch (send->state) {
 			case SUME_RIFFA_CHAN_STATE_IDLE:
 				break;
 			case SUME_RIFFA_CHAN_STATE_READY:
 				if (!(vect & SUME_MSI_TXBUF)) {
-					device_printf(dev, "%s: ch %d "
-					    "unexpected interrupt in send+3 "
-					    "state %u: vect = 0x%08x\n",
-					    __func__, ch, send->state, vect);
+					device_printf(dev, "ch %d unexpected "
+					    "interrupt in send+3 state %u: "
+					    "vect = 0x%08x\n", ch, send->state,
+					    vect);
 					send->recovery = 1;
 					break;
 				}
@@ -369,10 +367,10 @@ sume_intr_handler(void *arg)
 				break;
 			case SUME_RIFFA_CHAN_STATE_READ:
 				if (!(vect & SUME_MSI_TXDONE)) {
-					device_printf(dev, "%s: ch %d "
-					    "unexpected interrupt in send+4 "
-					    "state %u: vect = 0x%08x\n",
-					    __func__, ch, send->state, vect);
+					device_printf(dev, "ch %d unexpected "
+					    "interrupt in send+4 state %u: "
+					    "vect = 0x%08x\n", ch, send->state,
+					    vect);
 					send->recovery = 1;
 					send->state =
 					    SUME_RIFFA_CHAN_STATE_LEN;
@@ -388,10 +386,10 @@ sume_intr_handler(void *arg)
 				} else if (ch == SUME_RIFFA_CHANNEL_REG)
 					wakeup(&send->event);
 				else {
-					device_printf(dev, "%s: interrupt on "
-					    "ch %d unexpected in send+4 state "
-					    "%u: vect = 0x%08x\n", __func__, ch,
-					    send->state, vect);
+					device_printf(dev, "ch %d unexpected "
+					    "interrupt in send+4 state %u: "
+					    "vect = 0x%08x\n", ch, send->state,
+					    vect);
 					send->recovery = 1;
 				}
 				vect &= ~SUME_MSI_TXDONE;
@@ -399,31 +397,30 @@ sume_intr_handler(void *arg)
 			case SUME_RIFFA_CHAN_STATE_LEN:
 				break;
 			default:
-				device_printf(dev, "Unknown TX state!\n");
+				device_printf(dev, "unknown TX state!\n");
 			}
 			loops++;
 		}
 
 		if ((vect & (SUME_MSI_TXBUF | SUME_MSI_TXDONE)) &&
 		    send->recovery)
-			device_printf(dev, "%s: ignoring vect = 0x%08x during "
-			    "TX; not in recovery; state = %d loops = %d\n",
-			    __func__, vect, send->state, loops);
+			device_printf(dev, "ch %d ignoring vect = 0x%08x "
+			    "during TX; not in recovery; state = %d loops = "
+			    "%d\n", ch, vect, send->state, loops);
 
 		loops = 0;
 		while ((vect & (SUME_MSI_RXQUE | SUME_MSI_RXBUF |
 		    SUME_MSI_RXDONE)) && loops < 5) {
 			if (adapter->sume_debug)
-				device_printf(dev, "%s: RX ch %d state %u "
-				    "vect = 0x%08x\n", __func__, ch,
-				    recv->state, vect);
+				device_printf(dev, "RX ch %d state %u vect = "
+				    "0x%08x\n", ch, recv->state, vect);
 			switch (recv->state) {
 			case SUME_RIFFA_CHAN_STATE_IDLE:
 				if (!(vect & SUME_MSI_RXQUE)) {
-					device_printf(dev, "%s: ch %d "
-					    "unexpected interrupt in recv+0 "
-					    "state %u: vect = 0x%08x\n",
-					    __func__, ch, recv->state, vect);
+					device_printf(dev, "ch %d unexpected "
+					    "interrupt in recv+0 state %u: "
+					    "vect = 0x%08x\n", ch, recv->state,
+					    vect);
 					recv->recovery = 1;
 					break;
 				}
@@ -445,14 +442,13 @@ sume_intr_handler(void *arg)
 				    + SUME_RIFFA_LEN(recv->len) - 1);
 				if (max_ptr <
 				    (uint32_t)((uintptr_t)recv->buf_addr))
-					device_printf(dev, "%s: receive buffer"
-					    " wrap-around overflow.\n",
-					    __func__);
+					device_printf(dev, "receive buffer "
+					    "wrap-around overflow.\n");
 				if (SUME_RIFFA_OFFSET(recv->offlast) +
 				    SUME_RIFFA_LEN(recv->len) >
 				    adapter->sg_buf_size)
-					device_printf(dev, "%s: receive buffer"
-					    " too small.\n", __func__);
+					device_printf(dev, "receive buffer too"
+					    " small.\n");
 
 				/* Fill the bouncebuf "descriptor". */
 				sume_fill_bb_desc(adapter, recv,
@@ -479,10 +475,10 @@ sume_intr_handler(void *arg)
 				break;
 			case SUME_RIFFA_CHAN_STATE_READY:
 				if (!(vect & SUME_MSI_RXBUF)) {
-					device_printf(dev, "%s: ch %d "
-					    "unexpected interrupt in recv+1 "
-					    "state %u: vect = 0x%08x\n",
-					    __func__, ch, recv->state, vect);
+					device_printf(dev, "ch %d unexpected "
+					    "interrupt in recv+1 state %u: "
+					    "vect = 0x%08x\n", ch, recv->state,
+					    vect);
 					recv->recovery = 1;
 					break;
 				}
@@ -491,10 +487,10 @@ sume_intr_handler(void *arg)
 				break;
 			case SUME_RIFFA_CHAN_STATE_READ:
 				if (!(vect & SUME_MSI_RXDONE)) {
-					device_printf(dev, "%s: ch %d "
-					    "unexpected interrupt in recv+2 "
-					    "state %u: vect = 0x%08x\n",
-					    __func__, ch, recv->state, vect);
+					device_printf(dev, "ch %d unexpected "
+					    "interrupt in recv+2 state %u: "
+					    "vect = 0x%08x\n", ch, recv->state,
+					    vect);
 					recv->recovery = 1;
 					break;
 				}
@@ -510,10 +506,10 @@ sume_intr_handler(void *arg)
 				} else if (ch == SUME_RIFFA_CHANNEL_REG)
 					wakeup(&recv->event);
 				else {
-					device_printf(dev, "%s: interrupt on "
-					    "ch %d unexpected in recv+2 state "
-					    "%u: vect = 0x%08x\n", __func__, ch,
-					    recv->state, vect);
+					device_printf(dev, "ch %d unexpected "
+					    "interrupt in recv+2 state %u: "
+					    "vect = 0x%08x\n", ch, recv->state,
+					    vect);
 					recv->recovery = 1;
 				}
 				vect &= ~SUME_MSI_RXDONE;
@@ -521,16 +517,16 @@ sume_intr_handler(void *arg)
 			case SUME_RIFFA_CHAN_STATE_LEN:
 				break;
 			default:
-				device_printf(dev, "Unknown RX state!\n");
+				device_printf(dev, "unknown RX state!\n");
 			}
 			loops++;
 		}
 
 		if ((vect & (SUME_MSI_RXQUE | SUME_MSI_RXBUF |
 		    SUME_MSI_RXDONE)) && recv->recovery)
-			device_printf(dev, "%s: ignoring vect = 0x%08x during "
-			    "RX; not in recovery; state = %d, loops = %d\n",
-			    __func__, vect, recv->state, loops);
+			device_printf(dev, "ch %d ignoring vect = 0x%08x "
+			    "during RX; not in recovery; state = %d, loops = "
+			    "%d\n", ch, vect, recv->state, loops);
 	}
 	SUME_UNLOCK(adapter);
 
@@ -572,15 +568,15 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 	adapter->bar0_addr = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
 	    &adapter->rid, RF_ACTIVE);
 	if (adapter->bar0_addr == NULL) {
-		device_printf(dev, "Unable to allocate bus resource: "
-		    "bar0_addr\n");
+		device_printf(dev, "unable to allocate bus resource: "
+		    "BAR0 address\n");
 		return (ENXIO);
 	}
 	adapter->bt = rman_get_bustag(adapter->bar0_addr);
 	adapter->bh = rman_get_bushandle(adapter->bar0_addr);
 	adapter->bar0_len = rman_get_size(adapter->bar0_addr);
 	if (adapter->bar0_len != 1024) {
-		device_printf(dev, "%s: bar0_len %lu != 1024\n", __func__,
+		device_printf(dev, "BAR0 resource length %lu != 1024\n",
 		    adapter->bar0_len);
 		return (ENXIO);
 	}
@@ -588,7 +584,7 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 	count = pci_msi_count(dev);
 	error = pci_alloc_msi(dev, &count);
 	if (error) {
-		device_printf(dev, "Unable to allocate bus resource: PCI "
+		device_printf(dev, "unable to allocate bus resource: PCI "
 		    "MSI\n");
 		return (error);
 	}
@@ -597,7 +593,7 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 	adapter->irq.res = bus_alloc_resource_any(dev, SYS_RES_IRQ,
 	    &adapter->irq.rid, RF_SHAREABLE | RF_ACTIVE);
 	if (adapter->irq.res == NULL) {
-		device_printf(dev, "Unable to allocate bus resource: IRQ "
+		device_printf(dev, "unable to allocate bus resource: IRQ "
 		    "memory\n");
 		return (ENXIO);
 	}
@@ -614,8 +610,7 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 		    "%s", "SUME_INTR");
 
 	if (pci_find_cap(dev, PCIY_EXPRESS, &capmem) != 0) {
-		device_printf(dev, "%s: pcie_capability_read_dword "
-		    "PCI_EXP_DEVCTL error\n", __func__);
+		device_printf(dev, "PCI not PCIe capable\n");
 		return (ENXIO);
 	}
 
@@ -638,27 +633,27 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 	error = ENODEV;
 	/* Check bus master is enabled. */
 	if (((reg >> 4) & 0x1) != 1) {
-		device_printf(dev, "%s: bus master not enabled: %d\n",
-		    __func__, (reg >> 4) & 0x1);
+		device_printf(dev, "bus master not enabled: %d\n",
+		    (reg >> 4) & 0x1);
 		return (error);
 	}
 	/* Check link parameters are valid. */
 	if (((reg >> 5) & 0x3f) == 0 || ((reg >> 11) & 0x3) == 0) {
-		device_printf(dev, "%s: link parameters not valid: %d %d\n",
-		    __func__, (reg >> 5) & 0x3f, (reg >> 11) & 0x3);
+		device_printf(dev, "link parameters not valid: %d %d\n",
+		    (reg >> 5) & 0x3f, (reg >> 11) & 0x3);
 		return (error);
 	}
 	/* Check # of channels are within valid range. */
 	if ((reg & 0xf) == 0 || (reg & 0xf) > RIFFA_MAX_CHNLS) {
-		device_printf(dev, "%s: number of channels out of range: %d\n",
-		    __func__, reg & 0xf);
+		device_printf(dev, "number of channels out of range: %d\n",
+		    reg & 0xf);
 		return (error);
 	}
 	/* Check bus width. */
 	if (((reg >> 19) & 0xf) == 0 ||
 	    ((reg >> 19) & 0xf) > RIFFA_MAX_BUS_WIDTH_PARAM) {
-		device_printf(dev, "%s: bus width out f range: %d\n",
-		    __func__, (reg >> 19) & 0xf);
+		device_printf(dev, "bus width out of range: %d\n",
+		    (reg >> 19) & 0xf);
 		return (error);
 	}
 
@@ -842,8 +837,7 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 
 	if (recv->state != SUME_RIFFA_CHAN_STATE_READ || error == EWOULDBLOCK) {
 		SUME_UNLOCK(adapter);
-		device_printf(adapter->dev, "%s: wait error: %d\n", __func__,
-		    error);
+		device_printf(adapter->dev, "wait error: %d\n", error);
 		return (EWOULDBLOCK);
 	}
 
@@ -859,8 +853,8 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	    sizeof(struct nf_bb_desc));
 
 	if (le32toh(data->rtag) != send->rtag)
-		device_printf(adapter->dev, "%s: rtag error: 0x%08x 0x%08x\n",
-		    __func__, le32toh(data->rtag), send->rtag);
+		device_printf(adapter->dev, "rtag error: 0x%08x 0x%08x\n",
+		    le32toh(data->rtag), send->rtag);
 
 	sifr->val = le32toh(data->val);
 	recv->state = SUME_RIFFA_CHAN_STATE_IDLE;
@@ -1024,7 +1018,7 @@ sume_if_start_locked(struct ifnet *ifp)
 		plen = m->m_pkthdr.len;
 
 	if (adapter->sume_debug)
-		device_printf(adapter->dev, "Sending %d bytes to %s%d\n", plen,
+		device_printf(adapter->dev, "sending %d bytes to %s%d\n", plen,
 		    SUME_ETH_DEVICE_NAME, nf_priv->unit);
 
 	outbuf = (uint8_t *) send->buf_addr + sizeof(struct nf_bb_desc);
@@ -1036,8 +1030,8 @@ sume_if_start_locked(struct ifnet *ifp)
 	/* Make sure we fit with the 16 bytes nf_metadata. */
 	if (m->m_pkthdr.len + sizeof(struct nf_metadata) >
 	    adapter->sg_buf_size) {
-		device_printf(adapter->dev, "%s: Packet too big for bounce "
-		    "buffer (%d)\n", __func__, m->m_pkthdr.len);
+		device_printf(adapter->dev, "packet too big for bounce buffer "
+		    "(%d)\n", m->m_pkthdr.len);
 		m_freem(m);
 		nf_priv->stats.tx_dropped++;
 		return (ENOMEM);
@@ -1150,7 +1144,7 @@ sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 
 	ifp = if_alloc(IFT_ETHER);
 	if (ifp == NULL) {
-		device_printf(adapter->dev, "Cannot allocate ifnet\n");
+		device_printf(adapter->dev, "cannot allocate ifnet\n");
 		return (ENOMEM);
 	}
 
@@ -1188,7 +1182,7 @@ callback_dma(void *arg, bus_dma_segment_t *segs, int nseg, int err)
 	if (err)
 		return;
 
-	KASSERT(nseg == 1, ("%s: %d segments returned!", __func__, nseg));
+	KASSERT(nseg == 1, ("%d segments returned!", nseg));
 
 	*(bus_addr_t *) arg = segs[0].ds_addr;
 }
@@ -1206,7 +1200,7 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 	*p = malloc(SUME_RIFFA_CHANNELS * sizeof(struct riffa_chnl_dir *),
 	    M_SUME, M_ZERO | M_WAITOK);
 	if (*p == NULL) {
-		device_printf(dev, "%s: malloc(%s) failed.\n", __func__, dir);
+		device_printf(dev, "malloc(%s) failed.\n", dir);
 		return (error);
 	}
 
@@ -1217,8 +1211,8 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 		rp[i] = malloc(sizeof(struct riffa_chnl_dir), M_SUME,
 		    M_ZERO | M_WAITOK);
 		if (rp[i] == NULL) {
-			device_printf(dev, "%s: malloc(%s[%d]) riffa_chnl_dir "
-			    "failed.\n", __func__, dir, i);
+			device_printf(dev, "malloc(%s[%d]) riffa_chnl_dir "
+			    "failed.\n", dir, i);
 			return (error);
 		}
 
@@ -1236,8 +1230,8 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 		    &rp[i]->ch_tag);
 
 		if (err) {
-			device_printf(dev, "%s: bus_dma_tag_create(%s[%d]) "
-			    "failed.\n", __func__, dir, i);
+			device_printf(dev, "bus_dma_tag_create(%s[%d]) "
+			    "failed.\n", dir, i);
 			return (err);
 		}
 
@@ -1245,8 +1239,8 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 		    &rp[i]->buf_addr, BUS_DMA_WAITOK | BUS_DMA_COHERENT |
 		    BUS_DMA_ZERO, &rp[i]->ch_map);
 		if (err) {
-			device_printf(dev, "%s: bus_dmamem_alloc(%s[%d]) "
-			    "rp[i]->buf_addr failed.\n", __func__, dir, i);
+			device_printf(dev, "bus_dmamem_alloc(%s[%d]) failed.\n",
+			    dir, i);
 			return (err);
 		}
 
@@ -1256,8 +1250,8 @@ sume_probe_riffa_buffer(const struct sume_adapter *adapter,
 		    rp[i]->buf_addr, adapter->sg_buf_size, callback_dma,
 		    &hw_addr, BUS_DMA_NOWAIT);
 		if (err) {
-			device_printf(dev, "%s: bus_dmamap_load(%s[%d]) "
-			    "hw_addr failed.\n", __func__, dir, i);
+			device_printf(dev, "bus_dmamap_load(%s[%d]) failed.\n",
+			    dir, i);
 			return (err);
 		}
 		rp[i]->buf_hw_addr = hw_addr;
