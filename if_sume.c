@@ -764,7 +764,7 @@ sume_module_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 	/* Tag to indentify request. */
 	data->rtag = htole32(++send->rtag);
 	data->optype = htole32(optype);
-	send->len = 4;	/* words */
+	send->len = sizeof(struct nf_regop_data) / 4; /* words */
 
 	error = sume_modreg_write_locked(adapter);
 	if (error) {
