@@ -537,18 +537,14 @@ sume_intr_handler(void *arg)
 }
 
 /*
- * Filtering interrupts. We wait for the adapter to go into the 'running' state
- * to start accepting them.
+ * As we cannot disable interrupt generation, ignore early interrupts by waiting
+ * for the adapter to go into the 'running' state.
  */
 static int
 sume_intr_filter(void *arg)
 {
 	struct sume_adapter *adapter = arg;
 
-	/*
-	 * Ignore early interrupts from RIFFA given we cannot disable interrupt
-	 * generation.
-	 */
 	if (adapter->running == 0)
 		return (FILTER_STRAY);
 
