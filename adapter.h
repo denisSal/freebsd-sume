@@ -170,6 +170,7 @@ struct nf_priv {
 	struct nf_stats		stats;
 	uint32_t		unit;
 	uint32_t		port;
+	uint32_t		link_up;
 };
 
 struct sume_adapter {

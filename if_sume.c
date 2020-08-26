@@ -778,9 +778,9 @@ sume_module_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 		    "Waiting recv finish", 1 * hz);
 
 	/* This was a write so we are done; were interrupted, or timed out. */
-	if (optype != 0x00 || error != 0 || error == EWOULDBLOCK) {
+	if (optype != SUME_MR_READ || error != 0 || error == EWOULDBLOCK) {
 		send->state = SUME_RIFFA_CHAN_STATE_IDLE;
-		if (optype == 0x00)
+		if (optype == SUME_MR_READ)
 			error = EWOULDBLOCK;
 		else
 			error = 0;
@@ -949,13 +949,47 @@ sume_media_change(struct ifnet *ifp)
 }
 
 static void
+sume_update_link_status(struct ifnet *ifp)
+{
+	struct nf_priv *nf_priv = ifp->if_softc;
+	struct sume_adapter *adapter = nf_priv->adapter;
+	struct sume_ifreq sifr;
+	int error;
+	int link_status;
+
+	sifr.addr = SUME_STATUS_ADDR(nf_priv->port);
+	sifr.val = 0;
+
+	error = sume_module_reg_write(nf_priv, &sifr, SUME_MR_READ);
+	if (error)
+		return;
+
+	error = sume_module_reg_read(nf_priv, &sifr);
+	if (error)
+		return;
+
+	link_status = SUME_LINK_STATUS(sifr.val);
+
+	if (!link_status && nf_priv->link_up) {
+		if_link_state_change(ifp, LINK_STATE_DOWN);
+		nf_priv->link_up = 0;
+		if (adapter->sume_debug)
+			device_printf(adapter->dev, "port %d link state "
+			    "changed to DOWN\n", nf_priv->unit);
+	} else if (link_status && !nf_priv->link_up) {
+		nf_priv->link_up = 1;
+		if_link_state_change(ifp, LINK_STATE_UP);
+		if (adapter->sume_debug)
+			device_printf(adapter->dev, "port %d link state "
+			    "changed to UP\n", nf_priv->unit);
+	}
+}
+
+static void
 sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 {
 	struct nf_priv *nf_priv = ifp->if_softc;
 	struct ifmedia *ifm = &nf_priv->media;
-	struct sume_ifreq sifr;
-	int error;
-	int link_status = 0;
 
 	if (ifm->ifm_cur->ifm_media == (IFM_ETHER | IFM_10G_SR) &&
 	    (ifp->if_flags & IFF_UP))
@@ -965,19 +999,9 @@ sume_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 
 	ifmr->ifm_status |= IFM_AVALID;
 
-	sifr.addr = SUME_STATUS_ADDR(nf_priv->port);
-	sifr.val = 0;
+	sume_update_link_status(ifp);
 
-	error = sume_module_reg_write(nf_priv, &sifr, 0x00);
-	if (error)
-		return;
-
-	error = sume_module_reg_read(nf_priv, &sifr);
-	if (error)
-		return;
-
-	link_status = SUME_LINK_STATUS(sifr.val);
-	if (link_status)
+	if (nf_priv->link_up)
 		ifmr->ifm_status |= IFM_ACTIVE;
 }
 
@@ -1150,6 +1174,7 @@ sume_ifp_alloc(struct sume_adapter *adapter, uint32_t port)
 	nf_priv->adapter = adapter;
 	nf_priv->unit = alloc_unr(unr);
 	nf_priv->port = port;
+	nf_priv->link_up = 0;
 
 	if_initname(ifp, SUME_ETH_DEVICE_NAME, nf_priv->unit);
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
@@ -1394,7 +1419,9 @@ sume_get_stats(void *context, int pending)
 
 	for (i = 0; i < SUME_NPORTS; i++) {
 		struct ifnet *ifp = adapter->ifp[i];
-		if (ifp != NULL && ifp->if_flags & IFF_UP) {
+		sume_update_link_status(ifp);
+
+		if (ifp->if_flags & IFF_UP) {
 			struct nf_priv *nf_priv = ifp->if_softc;
 			struct sume_ifreq sifr;
 
