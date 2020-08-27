@@ -675,7 +675,6 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 	    128 << ((reg >> 16) & 0x7));
 
 	return (0);
-
 }
 
 /* If there is no sume_if_init, the ether_ioctl panics. */
@@ -741,13 +740,10 @@ static int
 sume_module_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
     uint32_t optype)
 {
-	struct sume_adapter *adapter;
+	struct sume_adapter *adapter = nf_priv->adapter;
+	struct riffa_chnl_dir *send = adapter->send[SUME_RIFFA_CHANNEL_REG];
 	struct nf_regop_data *data;
 	int error;
-	struct riffa_chnl_dir *send;
-
-	adapter = nf_priv->adapter;
-	send = adapter->send[SUME_RIFFA_CHANNEL_REG];
 
 	/*
 	 * 1. Make sure the channel is free;  otherwise return EBUSY.
@@ -810,14 +806,11 @@ sume_module_reg_write(struct nf_priv *nf_priv, struct sume_ifreq *sifr,
 static int
 sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 {
-	struct sume_adapter *adapter;
+	struct sume_adapter *adapter = nf_priv->adapter;
+	struct riffa_chnl_dir *recv = adapter->recv[SUME_RIFFA_CHANNEL_REG];
+	struct riffa_chnl_dir *send = adapter->send[SUME_RIFFA_CHANNEL_REG];
 	struct nf_regop_data *data;
-	int error = 0;
-	struct riffa_chnl_dir *recv, *send;
-
-	adapter = nf_priv->adapter;
-	recv = adapter->recv[SUME_RIFFA_CHANNEL_REG];
-	send = adapter->send[SUME_RIFFA_CHANNEL_REG];
+	int error;
 
 	/*
 	 * 0. Sleep waiting for result if needed (unless condition is
@@ -876,10 +869,8 @@ get_modreg_value(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	int error;
 
 	error = sume_module_reg_write(nf_priv, sifr, SUME_MR_READ);
-	if (error)
-		return (error);
-
-	error = sume_module_reg_read(nf_priv, sifr);
+	if (!error)
+		error = sume_module_reg_read(nf_priv, sifr);
 
 	return (error);
 }
@@ -960,18 +951,12 @@ sume_update_link_status(struct ifnet *ifp)
 	struct nf_priv *nf_priv = ifp->if_softc;
 	struct sume_adapter *adapter = nf_priv->adapter;
 	struct sume_ifreq sifr;
-	int error;
 	int link_status;
 
 	sifr.addr = SUME_STATUS_ADDR(nf_priv->port);
 	sifr.val = 0;
 
-	error = sume_module_reg_write(nf_priv, &sifr, SUME_MR_READ);
-	if (error)
-		return;
-
-	error = sume_module_reg_read(nf_priv, &sifr);
-	if (error)
+	if (get_modreg_value(nf_priv, &sifr))
 		return;
 
 	link_status = SUME_LINK_STATUS(sifr.val);
