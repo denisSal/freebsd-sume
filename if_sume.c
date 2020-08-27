@@ -810,7 +810,7 @@ sume_module_reg_read(struct nf_priv *nf_priv, struct sume_ifreq *sifr)
 	struct riffa_chnl_dir *recv = adapter->recv[SUME_RIFFA_CHANNEL_REG];
 	struct riffa_chnl_dir *send = adapter->send[SUME_RIFFA_CHANNEL_REG];
 	struct nf_regop_data *data;
-	int error;
+	int error = 0;
 
 	/*
 	 * 0. Sleep waiting for result if needed (unless condition is
