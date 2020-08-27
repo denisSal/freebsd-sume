@@ -609,9 +609,7 @@ sume_probe_riffa_pci(struct sume_adapter *adapter)
 		device_printf(dev, "failed to setup interrupt for rid %d, name"
 		    " %s: %d\n", adapter->irq.rid, "SUME_INTR", error);
 		return (ENXIO);
-	} else
-		bus_describe_intr(dev, adapter->irq.res, adapter->irq.tag,
-		    "%s", "SUME_INTR");
+	}
 
 	if (pci_find_cap(dev, PCIY_EXPRESS, &capmem) != 0) {
 		device_printf(dev, "PCI not PCIe capable\n");
