@@ -253,9 +253,11 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
 		return (NULL);
 	}
 	ifp = adapter->ifp[np];
+	nf_priv = ifp->if_softc;
+	nf_priv->stats.rx_packets++;
+	nf_priv->stats.rx_bytes += plen;
 
 	/* If the interface is down, well, we are done. */
-	nf_priv = ifp->if_softc;
 	if (!(ifp->if_flags & IFF_UP)) {
 		nf_priv->stats.ifc_down_packets++;
 		nf_priv->stats.ifc_down_bytes += plen;
@@ -276,8 +278,6 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
 	m_copyback(m, 0, plen, (void *) (indata + sizeof(struct nf_metadata)));
 	m->m_pkthdr.rcvif = ifp;
 
-	nf_priv->stats.rx_packets++;
-	nf_priv->stats.rx_bytes += plen;
 	return (m);
 }
 
