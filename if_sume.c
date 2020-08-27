@@ -1473,7 +1473,7 @@ sume_attach(device_t dev)
 	callout_init(&adapter->timer, 1);
 	TASK_INIT(&adapter->stat_task, 0, sume_get_stats, adapter);
 
-	adapter->tq = taskqueue_create_fast("sume_stats", M_NOWAIT,
+	adapter->tq = taskqueue_create("sume_stats", M_NOWAIT,
 	    taskqueue_thread_enqueue, &adapter->tq);
 	taskqueue_start_threads(&adapter->tq, 1, PI_NET, "%s stattaskq",
 	    device_get_nameunit(adapter->dev));
