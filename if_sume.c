@@ -1427,11 +1427,12 @@ sume_get_stats(void *context, int pending)
 
 	for (i = 0; i < SUME_NPORTS; i++) {
 		struct ifnet *ifp = adapter->ifp[i];
-		sume_update_link_status(ifp);
 
 		if (ifp->if_flags & IFF_UP) {
 			struct nf_priv *nf_priv = ifp->if_softc;
 			struct sume_ifreq sifr;
+
+			sume_update_link_status(ifp);
 
 			/* Get RX counter. */
 			sifr.addr = SUME_STAT_RX_ADDR(nf_priv->port);
