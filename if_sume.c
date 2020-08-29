@@ -162,7 +162,7 @@ static struct {
 	uint16_t device;
 	char *desc;
 } sume_pciids[] = {
-	{PCI_DEVICE_ID_SUME, "NetFPGA SUME"},
+	{PCI_DEVICE_ID_SUME, "NetFPGA SUME reference NIC"},
 };
 
 static inline uint32_t
