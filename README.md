@@ -1,7 +1,7 @@
 # NetFPGA SUME Reference NIC device driver
 
 ## Project description
-This project enables NetFPGA SUME 4x10 Gbps FPGA board to work as a NIC on FreeBSD by creating a driver based on the existing Linux driver for the 'Reference NIC' design using the RIFFA DMA engine from the private NetFPGA-SUME-live repository.
+This Google Summer of Code project enables NetFPGA SUME 4x10 Gbps FPGA board to work as a NIC on FreeBSD by creating a driver based on the existing Linux driver for the 'Reference NIC' design using the RIFFA DMA engine from the private NetFPGA-SUME-live repository.
 
 The SUME hardware design also offers communication with internal registers belonging to different modules of the design over a second channel. This is used as a way to obtain packet statistics and link status from nf_10g_interface modules connected to the board's SFP+ modules.
 
@@ -30,6 +30,9 @@ After downloading the code, run:
  # kldload ./if_sume.ko
 ```
 The driver should load and create 4 interfaces (named *sume0*-*sume3*).
+
+## Additional information
+You can find more details and information about the project and code in the driver's man page and on the GSoC project page and FreeBSD wiki page linked above.
 
 ## Useful links
  - https://reference.digilentinc.com/sume:sume
