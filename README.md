@@ -48,6 +48,6 @@ https://github.com/NetFPGA/NetFPGA-SUME-live/tree/master/lib/sw/std/driver/sume_
 You can find more details and information about the project and code in the driver's man page, as well as on the GSoC project page and FreeBSD wiki page linked above.
 
 ## Useful links
- - https://reference.digilentinc.com/sume:sume
- - https://github.com/NetFPGA/NetFPGA-SUME-live
- - https://github.com/NetFPGA/NetFPGA-SUME-public/wiki
+ - [NetFPGA SUME on Digilent webpage](https://reference.digilentinc.com/sume:sume)
+ - [NetFPGA SUME private github repository](https://github.com/NetFPGA/NetFPGA-SUME-live)
+ - [NetFPGA SUME public wiki](https://github.com/NetFPGA/NetFPGA-SUME-public/wiki)
