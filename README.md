@@ -32,7 +32,15 @@ After downloading the code, run:
 The driver should load and create 4 interfaces (named *sume0*-*sume3*).
 
 ## Additional information
-The driver in the current state is merged to the FreBSD head repository in [this](https://reviews.freebsd.org/rS364973) commit. I may use this Github repository to further improve and fix the code before merging to the FreBSD release. Additionally, I also started the work on the SUME NICv2 driver [here](https://github.com/denisSal/freebsd-sume-nic_v2). 
+The driver in the current state is merged to the FreBSD head repository in [this](https://reviews.freebsd.org/rS364973) commit. I may use this Github repository to further improve and fix the code before merging to the FreBSD release.
+
+FreeBSD driver has some advantages over the Linux version:
+ - more balanced TCP throughput (still open to speculation why but probably due to TX queuing),
+ - link state detection / reporting,
+ - access to hardware counters via sysctl,
+ - watchdog function to reset the HW if it gets stuck in TX state.
+
+Additionally, I also started the work on the SUME NICv2 driver [here](https://github.com/denisSal/freebsd-sume-nic_v2).
 
 The original Linux drivers for both the reference NIC and the NICv2 drivers can be found in the NetFPGA SUME live repo [here](
 https://github.com/NetFPGA/NetFPGA-SUME-live/tree/master/lib/sw/std/driver/sume_riffa_v1_0_0) and [here](https://github.com/NetFPGA/NetFPGA-SUME-live/tree/master/contrib-projects/nic_v2/sw/sume_uam_v1_0_0) (registration needed to view the code).
