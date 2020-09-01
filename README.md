@@ -32,7 +32,7 @@ After downloading the code, run:
 The driver should load and create 4 interfaces (named *sume0*-*sume3*).
 
 ## Additional information
-The driver in the current state is merged to the FreBSD head repository in [this](https://reviews.freebsd.org/rS364973) commit. I may use this Github repository to further improve and fix the code before merging to the FreBSD release.
+The driver (the last GSoC commit is [018df14](https://github.com/denisSal/freebsd-sume/commit/018df14e05df576bb81008efb30ef9a64bf06c13)) is merged to the FreBSD head repository in [this](https://reviews.freebsd.org/rS364973) commit. I may use this Github repository to further improve and fix the code before merging to the FreBSD release.
 
 FreeBSD driver has some advantages over the Linux version:
  - more balanced TCP throughput (still open to speculation why but probably due to TX queuing),
