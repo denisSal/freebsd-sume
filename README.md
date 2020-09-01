@@ -32,7 +32,12 @@ After downloading the code, run:
 The driver should load and create 4 interfaces (named *sume0*-*sume3*).
 
 ## Additional information
-You can find more details and information about the project and code in the driver's man page and on the GSoC project page and FreeBSD wiki page linked above.
+The driver in the current state is merged to the FreBSD head repository in [this](https://reviews.freebsd.org/rS364973) commit. I may use this Github repository to further improve and fix the code before merging to the FreBSD release. Additionally, I also started the work on the SUME NICv2 driver [here](https://github.com/denisSal/freebsd-sume-nic_v2). 
+
+The original Linux drivers for both the reference NIC and the NICv2 drivers can be found in the NetFPGA SUME live repo [here](
+https://github.com/NetFPGA/NetFPGA-SUME-live/tree/master/lib/sw/std/driver/sume_riffa_v1_0_0) and [here](https://github.com/NetFPGA/NetFPGA-SUME-live/tree/master/contrib-projects/nic_v2/sw/sume_uam_v1_0_0) (registration needed to view the code).
+
+You can find more details and information about the project and code in the driver's man page, as well as on the GSoC project page and FreeBSD wiki page linked above.
 
 ## Useful links
  - https://reference.digilentinc.com/sume:sume
