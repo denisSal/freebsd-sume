@@ -61,6 +61,55 @@ dealing only with frames with maximum size of 1514 bytes.
 The driver does not support multicast filtering.
 .Pp
 The hardware provides no checksums and offers no other offloading.
+.Sh SYSCTL VARIABLES
+The following variables are available as
+.Xr sysctl 8
+variables:
+.Bl -tag -width "xxxxxx"
+.It Va dev.sume.%d.rx_epkts
+A 64-bit counter of the number of erroneous packets (wrong metadata or
+too large packet) received on any interface.
+.It Va dev.sume.%d.rx_ebytes
+A 64-bit counter of the number of erroneous bytes (wrong metadata or too
+large packet) received on any interface.
+.It Va dev.sume.%d.debug
+Debug information printing.
+The default value is 0, set to 1 to enable.
+.It Va dev.sume.%d.sume%d.ifc_down_packets
+A 64-bit counter of the number of packets received on the interface
+sume%d configured as down.
+.It Va dev.sume.%d.sume%d.ifc_down_bytes
+A 64-bit counter of the number of bytes received on the interface sume%d
+configured as down.
+.It Va dev.sume.%d.sume%d.hw_tx_packets
+A 64-bit counter of the number of packets transmitted by the physical
+interface sume%d.
+This counter is updated in the timer function by fetching values from
+the module register of the hardware interface.
+.It Va dev.sume.%d.sume%d.hw_rx_packets
+A 64-bit counter of the number of packets received on the physical
+interface sume%d.
+This counter is updated in the timer function by fetching values from
+the module register of the hardware interface.
+.It Va dev.sume.%d.sume%d.tx_packets
+A 64-bit counter of the number of packets transmitted without error on
+the interface sume%d.
+.It Va dev.sume.%d.sume%d.tx_bytes
+A 64-bit counter of the number of bytes transmitted without error on the
+interface sume%d.
+.It Va dev.sume.%d.sume%d.tx_dropped
+A 64-bit counter of the number of packets dropped on TX to the interface
+sume%d.
+.It Va dev.sume.%d.sume%d.rx_packets
+A 64-bit counter of the number of packets received without error on the
+interface sume%d.
+.It Va dev.sume.%d.sume%d.rx_bytes
+A 64-bit counter of the number of bytes received without error on the
+interface sume%d.
+.It Va dev.sume.%d.sume%d.rx_dropped
+A 64-bit counter of the number of packets dropped on RX from the
+interface sume%d.
+.El
 .Sh SEE ALSO
 .Xr arp 4 ,
 .Xr netgraph 4 ,
