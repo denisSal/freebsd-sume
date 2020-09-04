@@ -1386,8 +1386,8 @@ sume_local_timer(void *arg)
 
 	SUME_LOCK(adapter);
 	if (adapter->send[SUME_RIFFA_CHANNEL_DATA]->state !=
-	    SUME_RIFFA_CHAN_STATE_IDLE && ++adapter->wd_counter >= 3) {
-		/* Resetting interfaces if stuck for 3 seconds. */
+	    SUME_RIFFA_CHAN_STATE_IDLE && ++adapter->wd_counter >= 2) {
+		/* Resetting interfaces if stuck for 2 seconds. */
 		device_printf(adapter->dev, "TX stuck, resetting adapter.\n");
 		read_reg(adapter, RIFFA_INFO_REG_OFF);
 
