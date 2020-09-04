@@ -259,6 +259,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
 
 	/* If the interface is down, well, we are done. */
 	if (!(ifp->if_flags & IFF_UP)) {
+		nf_priv->update_ctr = 1;
 		nf_priv->stats.ifc_down_packets++;
 		nf_priv->stats.ifc_down_bytes += plen;
 		return (NULL);
@@ -1410,10 +1411,11 @@ sume_get_stats(void *context, int pending)
 
 	for (i = 0; i < SUME_NPORTS; i++) {
 		struct ifnet *ifp = adapter->ifp[i];
+		struct nf_priv *nf_priv = ifp->if_softc;
 
-		if (ifp->if_flags & IFF_UP) {
-			struct nf_priv *nf_priv = ifp->if_softc;
+		if (ifp->if_flags & IFF_UP || nf_priv->update_ctr) {
 			struct sume_ifreq sifr;
+			nf_priv->update_ctr = 0;
 
 			sume_update_link_status(ifp);
 
