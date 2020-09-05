@@ -245,7 +245,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
 
 	/* We got the packet from one of the even bits */
 	np = (ffs(dport & SUME_DPORT_MASK) >> 1) - 1;
-	if (np > SUME_NPORTS) {
+	if (np < 0 || np > SUME_NPORTS) {
 		device_printf(dev, "invalid destination port 0x%04x (%d)\n",
 		    dport, np);
 		adapter->packets_err++;
@@ -266,7 +266,7 @@ sume_rx_build_mbuf(struct sume_adapter *adapter, uint32_t len)
 	}
 
 	if (adapter->sume_debug)
-		printf("Building mbuf with length: %d\n", plen);
+		device_printf(dev, "building mbuf with length: %d\n", plen);
 
 	m = m_getm(NULL, plen, M_NOWAIT, MT_DATA);
 	if (m == NULL) {
@@ -537,6 +537,10 @@ sume_intr_handler(void *arg)
 				read_reg(adapter, RIFFA_CHNL_REG(ch,
 				    RIFFA_TX_TNFR_LEN_REG_OFF));
 				recv->recovery = 0;
+			} else if (ch == SUME_RIFFA_CHANNEL_DATA &&
+			    vect & SUME_MSI_RXQUE) {
+				recv->recovery = 0;
+				recv->state = SUME_RIFFA_CHAN_STATE_IDLE;
 			}
 		}
 	}
