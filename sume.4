@@ -66,6 +66,9 @@ The following variables are available as
 .Xr sysctl 8
 variables:
 .Bl -tag -width "xxxxxx"
+.It Va dev.sume.%d.reset_ctr
+A 32-bit counter of the number of hardware resets due to TX getting
+stuck.
 .It Va dev.sume.%d.rx_epkts
 A 64-bit counter of the number of erroneous packets (wrong metadata or
 too large packet) received on any interface.

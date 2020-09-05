@@ -194,6 +194,7 @@ struct sume_adapter {
 	uint64_t		packets_err;
 	uint32_t		last_ifc;
 	uint32_t		num_sg;
+	uint32_t		reset_ctr;
 	uint32_t		sg_buf_size;
 	uint32_t		sume_debug;
 	uint32_t		wd_counter;

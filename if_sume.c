@@ -1311,11 +1311,15 @@ sume_sysctl_init(struct sume_adapter *adapter)
 	SYSCTL_ADD_INT(ctx, child, OID_AUTO, "debug", CTLFLAG_RW,
 	    &adapter->sume_debug, 0, "debug int leaf");
 
-	/* total RX error stats */
+	/* Total RX error stats. */
 	SYSCTL_ADD_U64(ctx, child, OID_AUTO, "rx_epkts",
 	    CTLFLAG_RD, &adapter->packets_err, 0, "rx errors");
 	SYSCTL_ADD_U64(ctx, child, OID_AUTO, "rx_ebytes",
 	    CTLFLAG_RD, &adapter->bytes_err, 0, "rx error bytes");
+
+	/* Additional stats. */
+	SYSCTL_ADD_U32(ctx, child, OID_AUTO, "reset_ctr",
+	    CTLFLAG_RD, &adapter->reset_ctr, 0, "reset counter");
 
 	for (i = SUME_NPORTS - 1; i >= 0; i--) {
 		struct ifnet *ifp = adapter->ifp[i];
@@ -1395,6 +1399,7 @@ sume_local_timer(void *arg)
 		adapter->send[SUME_RIFFA_CHANNEL_DATA]->state =
 		    SUME_RIFFA_CHAN_STATE_IDLE;
 		adapter->wd_counter = 0;
+		adapter->reset_ctr++;
 
 		check_tx_queues(adapter);
 	}
