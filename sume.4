@@ -66,18 +66,30 @@ The following variables are available as
 .Xr sysctl 8
 variables:
 .Bl -tag -width "xxxxxx"
+.It Va dev.sume.%d.debug
+Debug information printing.
+The default value is 0, set to 1 to enable.
 .It Va dev.sume.%d.reset_ctr
 A 32-bit counter of the number of hardware resets due to TX getting
 stuck.
+.It Va dev.sume.%d.tx_data_recovery
+A 32-bit counter of the number of TX recovery state transitions for data
+DMA channel.
+.It Va dev.sume.%d.rx_data_recovery
+A 32-bit counter of the number of RX recovery state transitions for data
+DMA channel.
+.It Va dev.sume.%d.tx_modreg_recovery
+A 32-bit counter of the number of TX recovery state transitions for
+module register DMA channel.
+.It Va dev.sume.%d.rx_modreg_recovery
+A 32-bit counter of the number of RX recovery state transitions for
+module register DMA channel.
 .It Va dev.sume.%d.rx_epkts
 A 64-bit counter of the number of erroneous packets (wrong metadata or
 too large packet) received on any interface.
 .It Va dev.sume.%d.rx_ebytes
 A 64-bit counter of the number of erroneous bytes (wrong metadata or too
 large packet) received on any interface.
-.It Va dev.sume.%d.debug
-Debug information printing.
-The default value is 0, set to 1 to enable.
 .It Va dev.sume.%d.sume%d.ifc_down_packets
 A 64-bit counter of the number of packets received on the interface
 sume%d configured as down.

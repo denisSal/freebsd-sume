@@ -156,6 +156,7 @@ struct riffa_chnl_dir {
 	uint32_t		len;		/* words */
 	uint32_t		offlast;
 	uint32_t		recovery;
+	uint32_t		recovery_ctr;
 	uint32_t		rtag;
 };
 

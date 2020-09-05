@@ -403,10 +403,12 @@ sume_intr_handler(void *arg)
 		}
 
 		if ((vect & (SUME_MSI_TXBUF | SUME_MSI_TXDONE)) &&
-		    send->recovery)
+		    send->recovery) {
+			send->recovery_ctr++;
 			device_printf(dev, "ch %d ignoring vect = 0x%08x "
 			    "during TX; not in recovery; state = %d loops = "
 			    "%d\n", ch, vect, send->state, loops);
+		}
 
 		loops = 0;
 		while ((vect & (SUME_MSI_RXQUE | SUME_MSI_RXBUF |
@@ -524,6 +526,7 @@ sume_intr_handler(void *arg)
 
 		if ((vect & (SUME_MSI_RXQUE | SUME_MSI_RXBUF |
 		    SUME_MSI_RXDONE)) && recv->recovery) {
+			recv->recovery_ctr++;
 			device_printf(dev, "ch %d ignoring vect = 0x%08x "
 			    "during RX; not in recovery; state = %d, loops = "
 			    "%d\n", ch, vect, recv->state, loops);
@@ -1311,15 +1314,27 @@ sume_sysctl_init(struct sume_adapter *adapter)
 	SYSCTL_ADD_INT(ctx, child, OID_AUTO, "debug", CTLFLAG_RW,
 	    &adapter->sume_debug, 0, "debug int leaf");
 
+	/* Additional stats. */
+	SYSCTL_ADD_U32(ctx, child, OID_AUTO, "reset_ctr",
+	    CTLFLAG_RD, &adapter->reset_ctr, 0, "reset counter");
+	SYSCTL_ADD_U32(ctx, child, OID_AUTO, "tx_data_recovery",
+	    CTLFLAG_RD, &adapter->send[SUME_RIFFA_CHANNEL_DATA]->recovery_ctr,
+	    0, "tx data recovery counter");
+	SYSCTL_ADD_U32(ctx, child, OID_AUTO, "rx_data_recovery",
+	    CTLFLAG_RD, &adapter->recv[SUME_RIFFA_CHANNEL_DATA]->recovery_ctr,
+	    0, "rx data recovery counter");
+	SYSCTL_ADD_U32(ctx, child, OID_AUTO, "tx_modreg_recovery",
+	    CTLFLAG_RD, &adapter->send[SUME_RIFFA_CHANNEL_REG]->recovery_ctr,
+	    0, "tx module register recovery counter");
+	SYSCTL_ADD_U32(ctx, child, OID_AUTO, "rx_modreg_recovery",
+	    CTLFLAG_RD, &adapter->recv[SUME_RIFFA_CHANNEL_REG]->recovery_ctr,
+	    0, "rx module register recovery counter");
+
 	/* Total RX error stats. */
 	SYSCTL_ADD_U64(ctx, child, OID_AUTO, "rx_epkts",
 	    CTLFLAG_RD, &adapter->packets_err, 0, "rx errors");
 	SYSCTL_ADD_U64(ctx, child, OID_AUTO, "rx_ebytes",
 	    CTLFLAG_RD, &adapter->bytes_err, 0, "rx error bytes");
-
-	/* Additional stats. */
-	SYSCTL_ADD_U32(ctx, child, OID_AUTO, "reset_ctr",
-	    CTLFLAG_RD, &adapter->reset_ctr, 0, "reset counter");
 
 	for (i = SUME_NPORTS - 1; i >= 0; i--) {
 		struct ifnet *ifp = adapter->ifp[i];
